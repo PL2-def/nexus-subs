@@ -1,0 +1,23 @@
+{
+  "name": "nexus-subscriptions",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "Plateforme e-commerce premium d'abonnements numériques avec Stripe, PayPal, SEPA QR, notifications mobile et livraison d'accès en direct",
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "server": "node server/index.js",
+    "build": "vite build",
+    "start": "vite build && node server/index.js",
+    "preview": "node server/index.js"
+  },
+  "devDependencies": {
+    "vite": "^6.1.1"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "nodemailer": "^7.0.0",
+    "qrcode": "^1.5.4",
+    "stripe": "^18.0.0"
+  }
+}

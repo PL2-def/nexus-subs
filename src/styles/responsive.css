@@ -1,0 +1,243 @@
+/* ==========================================================================
+   Mobile Drawer & Responsive Breakpoints
+   ========================================================================== */
+.mobile-nav-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 5, 11, 0.8);
+  backdrop-filter: blur(6px);
+  z-index: 250;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-normal);
+}
+
+.mobile-nav-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mobile-nav-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 84%;
+  max-width: 320px;
+  height: 100vh;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-medium);
+  z-index: 251;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform var(--transition-normal);
+  padding: 1.35rem;
+}
+
+.mobile-nav-drawer.open {
+  transform: translateX(0);
+}
+
+.mobile-nav-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 1rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.mobile-nav-links {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  flex: 1;
+}
+
+.mobile-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.8rem 0.95rem;
+  border-radius: var(--radius-md);
+  font-size: 0.96rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: left;
+  width: 100%;
+}
+
+.mobile-nav-link:hover {
+  background: rgba(124, 58, 237, 0.14);
+  color: #fff;
+}
+
+.mobile-nav-footer {
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-light);
+}
+
+@media (max-width: 1024px) {
+  .nav-desktop,
+  .promo-ribbon-right {
+    display: none;
+  }
+
+  .btn-mobile-toggle {
+    display: inline-flex;
+  }
+
+  .products-grid,
+  .hero-metrics-grid,
+  .why-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .prod-edit-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .checkout-body,
+  .order-live-body,
+  .admin-deliver-grid,
+  .support-wrapper {
+    grid-template-columns: 1fr;
+  }
+
+  .footer-top {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  :root {
+    --header-height: var(--mobile-header-height);
+  }
+
+  .promo-ribbon-left {
+    display: none;
+  }
+
+  .promo-ribbon-inner {
+    justify-content: center;
+  }
+
+  .container {
+    padding: 0 1rem;
+  }
+
+  .cart-badge-text,
+  .orders-btn-label {
+    display: none;
+  }
+
+  .hero-section {
+    padding: 3rem 0 2.5rem;
+  }
+
+  .hero-cta-row {
+    flex-direction: column;
+  }
+
+  .hero-cta-row .btn {
+    width: 100%;
+  }
+
+  .products-grid,
+  .steps-grid,
+  .why-grid,
+  .hero-metrics-grid,
+  .form-row,
+  .detail-benefits-grid,
+  .admin-kpi-row,
+  .prod-edit-grid,
+  .sepa-qr-and-fields,
+  .ntfy-setup-grid,
+  .footer-top {
+    grid-template-columns: 1fr;
+  }
+
+  .sepa-qr-box,
+  .ntfy-qr-card {
+    margin: 0 auto;
+  }
+
+  .prod-edit-bottom {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .order-live-stepper {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 0.85rem 1.15rem;
+  }
+
+  .stepper-line {
+    display: none;
+  }
+
+  .checkout-header,
+  .admin-modal-header,
+  .legal-modal-header,
+  .checkout-body,
+  .order-live-body,
+  .admin-dashboard-body,
+  .admin-deliver-grid,
+  .modal-product-body,
+  .modal-product-header,
+  .modal-product-footer {
+    padding-left: 1.1rem;
+    padding-right: 1.1rem;
+  }
+
+  .faq-body {
+    padding-left: 1.35rem;
+  }
+
+  .toast-container {
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+  }
+
+  .toast {
+    max-width: 100%;
+    width: 100%;
+  }
+}
+
+
+@media (max-width: 1024px) {
+  .guide-steps-cards,
+  .guide-rescue-grid,
+  .admin-discussions-split {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-disc-list-pane {
+    max-height: 230px;
+  }
+}
+
+@media (max-width: 768px) {
+  .admin-btn-label,
+  .floating-chat-label {
+    display: none;
+  }
+
+  .floating-chat-launcher {
+    padding: 0.8rem 0.95rem;
+    bottom: 1rem;
+    left: 1rem;
+  }
+
+  .disc-identity-bar,
+  .composer-attach-row {
+    grid-template-columns: 1fr;
+  }
+
+  .guide-panel-inner {
+    padding: 1.25rem;
+  }
+}

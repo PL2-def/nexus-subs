@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="fr" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+    <title>NEXUS SUBS — Abonnements Premium 12 Mois Sécurisés &amp; Garantie Zéro Perte</title>
+
+    <meta
+      name="description"
+      content="Profitez de YouTube Premium, PlayStation Plus Premium et Netflix 4K pendant 12 mois au meilleur prix. Paiement sécurisé Stripe, PayPal ou Virement SEPA QR, Garantie Zéro Perte et discussion en direct."
+    />
+    <meta name="theme-color" content="#06080f" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="NEXUS SUBS — Vos Abonnements Premium 12 Mois Jusqu'à -25%" />
+    <meta
+      property="og:description"
+      content="Activation officielle, Garantie Zéro Perte, paiement Stripe, PayPal ou SEPA QR, instructions pas-à-pas et discussion en direct."
+    />
+    <meta property="og:locale" content="fr_FR" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+
+    <link rel="stylesheet" href="/src/styles/variables.css" />
+    <link rel="stylesheet" href="/src/styles/base.css" />
+    <link rel="stylesheet" href="/src/styles/components.css" />
+    <link rel="stylesheet" href="/src/styles/responsive.css" />
+  </head>
+  <body>
+    <!-- Top Promo & Security Ribbon -->
+    <div class="promo-ribbon">
+      <div class="container promo-ribbon-inner">
+        <div class="promo-ribbon-left">
+          <span class="promo-dot" aria-hidden="true"></span>
+          <span>Garantie Zéro Perte d'Argent • Livraison en direct &amp; par e-mail</span>
+        </div>
+        <div class="promo-ribbon-center">
+          <span>Bienvenue : <strong>-5 €</strong> dès 100 € avec le code</span>
+          <button type="button" class="promo-code-chip" data-copy-promo="BIENVENUE5" title="Cliquer pour copier le code">
+            <span>BIENVENUE5</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" aria-hidden="true">
+              <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+              <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+            </svg>
+          </button>
+        </div>
+        <div class="promo-ribbon-right">
+          <button type="button" class="promo-rescue-link" data-action="open-rescue">
+            🛡️ Problème après paiement ? Secours immédiat
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sticky Site Header -->
+    <header class="site-header">
+      <div class="container header-container">
+        <a href="#" class="brand-logo" aria-label="NEXUS SUBS — Accueil">
+          <div class="logo-badge" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" width="20" height="20">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+            </svg>
+          </div>
+          <span class="brand-name">
+            <span>NEXUS</span><span class="brand-dot">•</span><span>SUBS</span>
+          </span>
+        </a>
+
+        <nav class="nav-desktop" aria-label="Navigation principale">
+          <a href="#products" class="nav-link">Nos Offres</a>
+          <a href="#guide" class="nav-link">Instructions &amp; Aide</a>
+          <a href="#why-us" class="nav-link">Sécurité &amp; Garanties</a>
+          <a href="#faq" class="nav-link">FAQ</a>
+        </nav>
+
+        <div class="header-actions">
+          <!-- Bouton Discussion en direct (tous articles ou article précis) -->
+          <button
+            type="button"
+            class="btn-header-orders"
+            data-action="open-discussion"
+            aria-label="Ouvrir la discussion en direct"
+          >
+            <span aria-hidden="true">💬</span>
+            <span class="orders-btn-label">Discuter</span>
+          </button>
+
+          <!-- Suivi commande & Réception des accès en direct -->
+          <button
+            type="button"
+            id="btn-open-order-tracker"
+            class="btn-header-orders"
+            data-action="open-order-tracker"
+            aria-label="Suivre ma commande et récupérer mes accès"
+          >
+            <span id="customer-order-dot" class="live-order-dot hidden" aria-hidden="true"></span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" aria-hidden="true">
+              <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+              <path d="m3.3 7 8.7 5 8.7-5" />
+              <path d="M12 22V12" />
+            </svg>
+            <span class="orders-btn-label">Mes Accès</span>
+          </button>
+
+          <!-- Panier -->
+          <button
+            type="button"
+            class="btn-header-cart"
+            data-action="open-cart"
+            aria-label="Ouvrir le panier"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="19" height="19" aria-hidden="true">
+              <circle cx="8" cy="21" r="1" />
+              <circle cx="19" cy="21" r="1" />
+              <path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" />
+            </svg>
+            <span class="cart-badge-text">Panier</span>
+            <span class="cart-count-badge hidden" aria-label="Articles au panier">0</span>
+          </button>
+
+          <!-- Accès Administrateur (raccourci clavier Alt+Shift+A) -->
+          <button
+            type="button"
+            id="btn-admin-account"
+            class="btn-header-admin"
+            data-action="open-admin"
+            aria-label="Connexion Compte Administrateur"
+            title="Connexion Admin (ou Alt+Shift+A)"
+          >
+            <span id="admin-status-dot" class="admin-status-dot" aria-hidden="true"></span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" aria-hidden="true">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span class="admin-btn-label">Admin</span>
+            <span id="admin-notif-badge" class="notif-count-badge hidden">0</span>
+          </button>
+
+          <button
+            type="button"
+            class="btn-mobile-toggle"
+            data-action="toggle-mobile-menu"
+            aria-label="Menu mobile"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22" aria-hidden="true">
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Mobile Navigation Drawer -->
+    <div id="mobile-nav-overlay" class="mobile-nav-overlay" aria-hidden="true"></div>
+    <nav id="mobile-nav-drawer" class="mobile-nav-drawer" aria-label="Menu mobile">
+      <div class="mobile-nav-header">
+        <span class="brand-name">
+          <span>NEXUS</span><span class="brand-dot">•</span><span>SUBS</span>
+        </span>
+        <button type="button" class="mobile-nav-close" data-action="close-mobile-menu" aria-label="Fermer le menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="mobile-nav-links">
+        <a href="#products" class="mobile-nav-link">Nos Abonnements 12 Mois</a>
+        <a href="#guide" class="mobile-nav-link">📘 Instructions d'Achat &amp; d'Activation</a>
+        <button type="button" class="mobile-nav-link" data-action="open-discussion">
+          💬 Poser une question en direct
+        </button>
+        <button type="button" class="mobile-nav-link" data-action="open-order-tracker">
+          📦 Suivre ma commande / Mes Accès
+        </button>
+        <button type="button" class="mobile-nav-link" data-action="open-rescue">
+          🛡️ Secours Paiement (Garantie Zéro Perte)
+        </button>
+        <button type="button" class="mobile-nav-link" data-action="open-admin">
+          🔐 Connexion Espace Admin
+        </button>
+      </div>
+
+      <div class="mobile-nav-footer">
+        <button type="button" class="btn btn-primary" style="width: 100%" data-action="open-cart">
+          <span>Voir mon panier</span>
+          <span class="cart-count-badge hidden">0</span>
+        </button>
+      </div>
+    </nav>
+
+    <!-- Main Storefront Content -->
+    <main id="main-content">
+      <!-- Hero Section -->
+      <section class="hero-section" aria-labelledby="hero-heading">
+        <div class="container hero-content">
+          <div class="hero-badge-pill">
+            <span class="hero-pill-dot" aria-hidden="true"></span>
+            <span>Abonnements 12 Mois Certifiés • Protection Anti-Fraude &amp; Garantie Zéro Perte</span>
+          </div>
+
+          <h1 id="hero-heading" class="hero-title">
+            Le Divertissement Premium,<br />
+            <span class="hero-title-gradient">Sans Engagement et Jusqu'à -25%.</span>
+          </h1>
+
+          <p class="hero-subtitle">
+            Accédez pendant 1 an complet à <strong>YouTube Premium</strong>, <strong>PlayStation Plus Premium</strong> et
+            <strong>Netflix 4K UHD</strong>. Réglez par Carte Bancaire, Apple Pay, PayPal ou Virement SEPA QR, discutez en
+            direct avec un conseiller et recevez vos accès dans un coffre chiffré.
+          </p>
+
+          <div class="hero-cta-row">
+            <a href="#products" class="btn btn-primary btn-lg">
+              <span>Découvrir les offres</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" class="btn-icon" aria-hidden="true">
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+            </a>
+            <button type="button" class="btn btn-secondary btn-lg" data-action="open-discussion">
+              <span>💬 Poser une question en direct</span>
+            </button>
+            <button type="button" class="btn btn-outline btn-lg" data-action="open-order-tracker">
+              <span>📦 Récupérer mes accès</span>
+            </button>
+          </div>
+
+          <!-- Accepted Payment Methods Strip -->
+          <div class="hero-payment-strip" aria-label="Moyens de paiement acceptés">
+            <span class="strip-label">Paiements 100% sécurisés :</span>
+            <div class="payment-pills-row">
+              <span class="pay-pill">💳 Stripe (CB / Apple Pay / Google Pay)</span>
+              <span class="pay-pill">🅿️ PayPal Checkout</span>
+              <span class="pay-pill">⚡ Virement SEPA Instant QR (10s)</span>
+            </div>
+          </div>
+
+          <!-- Key Trust Metrics -->
+          <div class="hero-metrics-grid">
+            <div class="metric-card">
+              <span class="metric-value">Zéro Perte</span>
+              <span class="metric-label">Preuve signée &amp; secours garanti après paiement</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-value">AES-256</span>
+              <span class="metric-label">Coffre d'identifiants chiffré &amp; confidentiel</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-value">365 jours</span>
+              <span class="metric-label">Garantie de continuité &amp; remplacement</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-value">Chat Direct</span>
+              <span class="metric-label">Conseiller disponible avant, pendant &amp; après achat</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Products Section -->
+      <section id="products" class="products-section" aria-labelledby="products-heading">
+        <div class="container">
+          <div class="section-header">
+            <span class="section-tag">Catalogue Officiel</span>
+            <h2 id="products-heading" class="section-title">Choisissez Votre Forfait Annuel</h2>
+            <p class="section-subtitle">
+              Un règlement unique pour 12 mois complets. Une question sur une offre précise ? Cliquez sur « Poser une
+              question » directement sur sa carte.
+            </p>
+
+            <div class="catalog-filter-bar" role="group" aria-label="Filtrer par catégorie">
+              <button type="button" class="filter-pill active" data-filter="all">Toutes les offres</button>
+              <button type="button" class="filter-pill" data-filter="streaming-video">Vidéo, Cinéma &amp; Musique</button>
+              <button type="button" class="filter-pill" data-filter="gaming">Gaming Console</button>
+            </div>
+          </div>
+
+          <div id="products-grid" class="products-grid"></div>
+
+          <div class="savings-highlight-banner">
+            <div class="savings-banner-left">
+              <div class="savings-icon-box" aria-hidden="true">🛡️</div>
+              <div>
+                <h3 class="savings-banner-title">Garantie Zéro Perte d'Argent — Comment êtes-vous protégé ?</h3>
+                <p class="savings-banner-desc">
+                  Chaque commande génère un <strong>certificat cryptographique téléchargeable</strong> et une sauvegarde
+                  automatique hors-ligne. Même si votre navigateur se ferme, si votre Wi-Fi coupe ou si vous faites une
+                  erreur d'adresse e-mail, notre service de secours retrouve votre transaction à 100%.
+                </p>
+              </div>
+            </div>
+            <button type="button" class="btn btn-outline" data-action="open-rescue">
+              Accéder au Secours Paiement
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Step-by-Step Instructions Center (Purchase, Delivery, Activation, Fail-Safe Rescue) -->
+      <section id="guide" class="guide-section" aria-labelledby="guide-heading">
+        <div class="container">
+          <div class="section-header">
+            <span class="section-tag">Accompagnement Complet</span>
+            <h2 id="guide-heading" class="section-title">Instructions d'Achat, de Réception &amp; d'Activation</h2>
+            <p class="section-subtitle">
+              Tout est prévu étape par étape pour vous guider de la commande jusqu'à l'utilisation sur vos écrans, ainsi
+              qu'en cas d'imprévu technique.
+            </p>
+          </div>
+
+          <div class="guide-tabs-container">
+            <div class="mwg-tablist-scroller" role="tablist" aria-label="Guides d'aide client" data-mwg-tabs="guide">
+              <button type="button" role="tab" id="gtab-buy" aria-selected="true" tabindex="0">
+                1. Comment commander
+              </button>
+              <button type="button" role="tab" id="gtab-receive" aria-selected="false" tabindex="-1">
+                2. Obtenir son bien
+              </button>
+              <button type="button" role="tab" id="gtab-activate" aria-selected="false" tabindex="-1">
+                3. Activer (YouTube / PSN / Netflix)
+              </button>
+              <button type="button" role="tab" id="gtab-rescue" aria-selected="false" tabindex="-1">
+                4. Solutions de secours (Bug / Erreur)
+              </button>
+            </div>
+
+            <div class="guide-panels-stack">
+              <!-- Onglet 1 : Comment acheter -->
+              <div role="tabpanel" aria-labelledby="gtab-buy" tabindex="0">
+                <div class="guide-panel-inner">
+                  <div class="guide-steps-cards">
+                    <div class="guide-step-box">
+                      <span class="guide-badge-num">Étape 1</span>
+                      <h3>Sélectionnez votre abonnement</h3>
+                      <p>Cliquez sur <strong>« Commander maintenant »</strong> sur l'offre souhaitée (ou ajoutez plusieurs offres au panier). Vous pouvez saisir un code promo comme <code>BIENVENUE5</code> directement à l'étape de validation.</p>
+                    </div>
+                    <div class="guide-step-box">
+                      <span class="guide-badge-num">Étape 2</span>
+                      <h3>Indiquez votre e-mail de réception</h3>
+                      <p>Renseignez votre nom et une adresse e-mail valide (pas d'adresse jetable). Pour <strong>YouTube Premium</strong>, vous pouvez préciser l'adresse Gmail sur laquelle recevoir l'invitation familiale.</p>
+                    </div>
+                    <div class="guide-step-box">
+                      <span class="guide-badge-num">Étape 3</span>
+                      <h3>Choisissez parmi nos 3 paiements</h3>
+                      <p><strong>Stripe</strong> (Carte Bancaire, Apple Pay, Google Pay : validation instantanée), <strong>PayPal</strong>, ou <strong>Virement SEPA Instantané 10s</strong> (en scannant simplement le QR Code bancaire affiché à l'écran).</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Onglet 2 : Comment obtenir son bien -->
+              <div role="tabpanel" aria-labelledby="gtab-receive" hidden="until-found">
+                <div class="guide-panel-inner">
+                  <div class="guide-steps-cards">
+                    <div class="guide-step-box">
+                      <span class="guide-badge-num">Canal 1 — Instantané</span>
+                      <h3>Dans votre boîte de dialogue « Mes Accès »</h3>
+                      <p>Dès le paiement validé, ne quittez même pas le site : notre équipe reçoit une notification sonore sur mobile et vous envoie vos identifiants <strong>en direct à l'écran</strong> dans un coffre masqué sécurisé.</p>
+                    </div>
+                    <div class="guide-step-box">
+                      <span class="guide-badge-num">Canal 2 — Sauvegarde</span>
+                      <h3>Par courrier électronique</h3>
+                      <p>Vos identifiants ou votre lien d'invitation vous sont également transmis par e-mail afin de les conserver précieusement (pensez à vérifier vos <em>Courriers indésirables / Spams</em>).</p>
+                    </div>
+                    <div class="guide-step-box">
+                      <span class="guide-badge-num">Canal 3 — Preuve locale</span>
+                      <h3>Certificat téléchargeable &amp; Numéro #NX</h3>
+                      <p>Téléchargez en 1 clic votre <strong>Preuve d'Achat Signée (.txt)</strong>. Sur n'importe quel autre appareil, cliquez sur <strong>« Mes Accès »</strong> en haut du site et entrez votre numéro <code>#NX-XXXXXX</code> + votre e-mail.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Onglet 3 : Tutoriels d'activation -->
+              <div role="tabpanel" aria-labelledby="gtab-activate" hidden="until-found">
+                <div class="guide-panel-inner">
+                  <div class="guide-steps-cards">
+                    <div class="guide-step-box">
+                      <span class="guide-badge-num">▶️ YouTube Premium</span>
+                      <h3>Sur votre propre compte Google</h3>
+                      <ol class="guide-ordered-list">
+                        <li>Cliquez sur le lien d'invitation officiel Google reçu dans votre coffre d'accès.</li>
+                        <li>Vérifiez que vous êtes connecté à votre compte Gmail habituel (aucun mot de passe ne vous est demandé).</li>
+                        <li>Validez l'adhésion : YouTube sans pub et YouTube Music s'activent immédiatement sur TV, mobile et PC.</li>
+                      </ol>
+                    </div>
+                    <div class="guide-step-box">
+                      <span class="guide-badge-num">🎮 PlayStation Plus Premium</span>
+                      <h3>Jouer sur votre propre profil PS5 / PS4</h3>
+                      <ol class="guide-ordered-list">
+                        <li>Sur votre console, créez un nouvel utilisateur et connectez-vous avec l'e-mail et le mot de passe fournis.</li>
+                        <li><strong>Sur PS5 :</strong> allez dans <em>Paramètres &gt; Utilisateurs et comptes &gt; Autre &gt; Partage de console et jeu hors ligne &gt; Activer</em>.</li>
+                        <li><strong>Sur PS4 :</strong> allez dans <em>Paramètres &gt; Gestion du compte &gt; Activer en tant que PS4 principale</em>.</li>
+                        <li>Téléchargez vos jeux depuis le catalogue puis repassez sur <strong>votre profil habituel</strong> pour jouer avec vos amis et trophées !</li>
+                      </ol>
+                    </div>
+                    <div class="guide-step-box">
+                      <span class="guide-badge-num">🎬 Netflix Premium 4K</span>
+                      <h3>Accès Ultra HD + Profil PIN privé</h3>
+                      <ol class="guide-ordered-list">
+                        <li>Ouvrez Netflix sur votre Smart TV, Box TV, ordinateur ou mobile.</li>
+                        <li>Connectez-vous avec l'identifiant et le mot de passe présents dans votre coffre d'accès.</li>
+                        <li>Sélectionnez uniquement <strong>le profil qui vous est attribué</strong> et entrez votre code PIN personnel à 4 chiffres.</li>
+                      </ol>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Onglet 4 : Solutions de secours -->
+              <div role="tabpanel" aria-labelledby="gtab-rescue" hidden="until-found">
+                <div class="guide-panel-inner">
+                  <div class="guide-rescue-grid">
+                    <div class="guide-step-box">
+                      <h3>🔌 Coupure Internet ou page fermée après paiement</h3>
+                      <p>Votre commande reste mémorisée sur votre navigateur et notre système rejoue automatiquement les confirmations mises en attente dès le retour du réseau. Cliquez simplement sur <strong>« Mes Accès »</strong> pour rouvrir votre suivi.</p>
+                    </div>
+                    <div class="guide-step-box">
+                      <h3>✉️ Faute de frappe dans votre adresse e-mail ou oubli de référence SEPA</h3>
+                      <p>Pas d'inquiétude ! Cliquez ci-dessous sur le <strong>Secours Paiement Prioritaire</strong>, indiquez le montant payé et le nom figurant sur votre compte bancaire / PayPal / CB : notre équipe rattache manuellement votre paiement en quelques minutes.</p>
+                    </div>
+                  </div>
+                  <div style="margin-top:1.25rem;display:flex;gap:0.75rem;flex-wrap:wrap;">
+                    <button type="button" class="btn btn-primary" data-action="open-rescue">
+                      🛡️ Ouvrir un Dossier de Secours Paiement
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-action="open-discussion">
+                      💬 Parler immédiatement à un conseiller
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Security, Confidentiality & Fraud Prevention Section -->
+      <section id="why-us" class="why-us-section" aria-labelledby="why-heading">
+        <div class="container">
+          <div class="section-header">
+            <span class="section-tag">Confidentialité &amp; Confiance</span>
+            <h2 id="why-heading" class="section-title">Sécurité Bancaire, Anti-Fraude &amp; Vie Privée</h2>
+            <p class="section-subtitle">
+              Une architecture moderne conçue pour protéger vos données personnelles, sécuriser vos règlements et
+              garantir la livraison de chaque achat.
+            </p>
+          </div>
+
+          <div class="why-grid">
+            <div class="why-card">
+              <div class="why-icon-wrap" aria-hidden="true">🔐</div>
+              <h3 class="why-title">Chiffrement AES-256-GCM</h3>
+              <p class="why-desc">
+                Vos identifiants livrés sont chiffrés au repos sur le serveur et masqués par défaut à l'écran avec
+                révélation temporisée de 15 secondes contre les regards indiscrets.
+              </p>
+            </div>
+
+            <div class="why-card">
+              <div class="why-icon-wrap" aria-hidden="true">🛡️</div>
+              <h3 class="why-title">Zéro IP Stockée &amp; PCI-DSS</h3>
+              <p class="why-desc">
+                Aucune coordonnée bancaire ne transite par nos serveurs (gérées par Stripe &amp; PayPal), et aucune
+                adresse IP brute n'est enregistrée conformément au RGPD.
+              </p>
+            </div>
+
+            <div class="why-card">
+              <div class="why-icon-wrap" aria-hidden="true">💾</div>
+              <h3 class="why-title">Journal Anti-Crash Signé</h3>
+              <p class="why-desc">
+                Chaque commande reçoit une signature cryptographique HMAC vérifiable et une double sauvegarde automatique
+                pour qu'aucun bug ne puisse jamais faire perdre un paiement.
+              </p>
+            </div>
+
+            <div class="why-card">
+              <div class="why-icon-wrap" aria-hidden="true">✅</div>
+              <h3 class="why-title">Garantie 365 Jours</h3>
+              <p class="why-desc">
+                En cas d'imprévu technique durant vos 12 mois d'abonnement, notre assistance 7j/7 rétablit ou remplace
+                votre accès sous 24h sans aucun frais supplémentaire.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FAQ Section (Native <details> Accordion per Modern Web Guidance) -->
+      <section id="faq" class="faq-section" aria-labelledby="faq-heading">
+        <div class="container">
+          <div class="section-header">
+            <span class="section-tag">Questions Fréquentes</span>
+            <h2 id="faq-heading" class="section-title">Vos Questions, Nos Réponses Claires</h2>
+          </div>
+
+          <div class="accordion faq-accordion" aria-labelledby="faq-heading">
+            <details>
+              <summary>Que se passe-t-il si ma page plante juste après mon paiement ?</summary>
+              <div class="faq-body">
+                <p>
+                  Vous ne perdez jamais votre argent : votre commande est sauvegardée à la fois sur votre appareil et
+                  dans notre journal serveur immuable. Rouvrez simplement le site et cliquez sur <strong>« Mes Accès »</strong>
+                  (ou sur <strong>« Secours Paiement »</strong> si vous aviez fait une faute de frappe dans votre e-mail).
+                </p>
+              </div>
+            </details>
+
+            <details>
+              <summary>Puis-je poser une question sur un article précis avant de payer ?</summary>
+              <div class="faq-body">
+                <p>
+                  Bien sûr ! Cliquez à tout moment sur le bouton flottant <strong>« Discuter en direct »</strong> en bas
+                  à droite (ou sur « Question sur cet article » sous une offre). Vous pouvez choisir de parler de toute
+                  la boutique ou d'un abonnement précis en direct avec nous.
+                </p>
+              </div>
+            </details>
+
+            <details>
+              <summary>Quels moyens de paiement acceptez-vous ?</summary>
+              <div class="faq-body">
+                <p>
+                  Nous acceptons <strong>Stripe</strong> (Carte Bancaire CB/Visa/Mastercard, Apple Pay, Google Pay),
+                  <strong>PayPal</strong>, ainsi que le <strong>Virement Bancaire Instantané SEPA (10s)</strong> avec QR
+                  Code bancaire européen officiel prêt à scanner.
+                </p>
+              </div>
+            </details>
+
+            <details>
+              <summary>Y a-t-il un prélèvement automatique au bout d'un an ?</summary>
+              <div class="faq-body">
+                <p>
+                  Aucun ! Il s'agit d'un paiement unique pour 365 jours complets, sans renouvellement automatique caché.
+                </p>
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <!-- Support & Contact Section -->
+      <section id="support" class="support-section" aria-labelledby="support-heading">
+        <div class="container">
+          <div class="support-wrapper">
+            <div class="support-info-col">
+              <span class="section-tag">Assistance 7j/7</span>
+              <h2 id="support-heading" class="support-info-title">Préférez-vous nous laisser un message écrit ?</h2>
+              <p class="support-info-text">
+                Pour une réponse instantanée, utilisez notre boîte de <strong>Discussion en direct</strong>. Vous pouvez
+                aussi remplir ce formulaire qui rejoint directement notre centre de suivi.
+              </p>
+
+              <div class="support-channels">
+                <div class="channel-card">
+                  <div class="channel-icon" aria-hidden="true">✉️</div>
+                  <div class="channel-info">
+                    <h3>E-mail officiel</h3>
+                    <p>subpassdelivrey@gmail.com</p>
+                  </div>
+                </div>
+                <div class="channel-card">
+                  <div class="channel-icon" aria-hidden="true">🛡️</div>
+                  <div class="channel-info">
+                    <h3>Urgence après paiement</h3>
+                    <p><button type="button" class="inline-legal-btn" data-action="open-rescue">Ouvrir le formulaire Secours Zéro Perte →</button></p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <form id="support-contact-form" class="support-form">
+              <div class="form-group">
+                <label for="support-name" class="form-label">Votre prénom ou nom *</label>
+                <input
+                  type="text"
+                  id="support-name"
+                  name="name"
+                  class="form-control"
+                  placeholder="Ex : Thomas Martin"
+                  autocomplete="name"
+                  required
+                  data-error="support-name-error"
+                />
+                <div id="support-name-error" class="field-error-msg">
+                  <span role="img" aria-label="Erreur">⚠️</span> Veuillez indiquer votre nom.
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="support-email" class="form-label">Votre adresse e-mail *</label>
+                <span id="sup-email-hint" class="input-hint">Format : vous@exemple.fr</span>
+                <input
+                  type="email"
+                  id="support-email"
+                  name="email"
+                  class="form-control"
+                  placeholder="vous@exemple.fr"
+                  autocomplete="email"
+                  aria-describedby="sup-email-hint"
+                  required
+                  data-error="support-email-error"
+                />
+                <div id="support-email-error" class="field-error-msg">
+                  <span role="img" aria-label="Erreur">⚠️</span> Saisissez une adresse e-mail au format vous@exemple.fr.
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="support-message" class="form-label">Votre message *</label>
+                <textarea
+                  id="support-message"
+                  name="message"
+                  class="form-control"
+                  placeholder="Bonjour, j'aimerais savoir..."
+                  required
+                  data-error="support-msg-error"
+                ></textarea>
+                <div id="support-msg-error" class="field-error-msg">
+                  <span role="img" aria-label="Erreur">⚠️</span> Veuillez écrire votre question ou demande.
+                </div>
+              </div>
+
+              <button type="submit" class="btn btn-primary" style="align-self: flex-start">
+                <span>Envoyer ma demande</span>
+              </button>
+            </form>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-top">
+          <div class="footer-brand-col">
+            <a href="#" class="brand-logo" aria-label="NEXUS SUBS">
+              <div class="logo-badge" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" width="20" height="20">
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                </svg>
+              </div>
+              <span class="brand-name">
+                <span>NEXUS</span><span class="brand-dot">•</span><span>SUBS</span>
+              </span>
+            </a>
+            <p class="footer-brand-desc">
+              Plateforme sécurisée d'abonnements numériques 12 mois. Chiffrement AES-256, Garantie Zéro Perte et
+              livraison en direct.
+            </p>
+          </div>
+
+          <div class="footer-col">
+            <h3 class="footer-col-title">Espace Client</h3>
+            <ul class="footer-links-list">
+              <li><a href="#products">Catalogue des offres</a></li>
+              <li><a href="#guide">Instructions d'achat &amp; d'activation</a></li>
+              <li><button type="button" data-action="open-discussion">Discussion en direct</button></li>
+              <li><button type="button" data-action="open-order-tracker">Récupérer mes accès</button></li>
+              <li><button type="button" data-action="open-rescue">Secours Paiement / Bug</button></li>
+            </ul>
+          </div>
+
+          <div class="footer-col">
+            <h3 class="footer-col-title">Informations Légales</h3>
+            <ul class="footer-links-list">
+              <li><button type="button" data-action="open-legal" data-doc="cgv">Conditions Générales de Vente</button></li>
+              <li><button type="button" data-action="open-legal" data-doc="mentions">Mentions Légales</button></li>
+              <li><button type="button" data-action="open-legal" data-doc="confidentialite">Confidentialité &amp; Sécurité</button></li>
+              <li><button type="button" data-action="open-legal" data-doc="remboursements">Garantie 365j</button></li>
+              <li><button type="button" data-action="open-admin">Accès Administrateur</button></li>
+            </ul>
+          </div>
+
+          <div class="footer-col newsletter-box">
+            <h3 class="footer-col-title">Offres Privilèges</h3>
+            <p>Recevez nos ventes flash et codes promotionnels réservés aux membres.</p>
+            <form id="newsletter-form" class="newsletter-form-group">
+              <label for="newsletter-email" class="visually-hidden">Votre adresse e-mail</label>
+              <input
+                type="email"
+                id="newsletter-email"
+                class="form-control"
+                placeholder="votre@email.fr"
+                autocomplete="email"
+                required
+              />
+              <button type="submit" class="btn btn-secondary">S'inscrire</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="footer-disclaimer-card">
+          <p>
+            <strong>Indépendance des marques :</strong> YouTube™ et YouTube Music™ sont des marques déposées de Google
+            LLC. PlayStation™ et PS Plus™ sont des marques déposées de Sony Interactive Entertainment Inc. Netflix™ est
+            une marque déposée de Netflix Inc. NEXUS SUBS agit en qualité de distributeur indépendant.
+          </p>
+        </div>
+
+        <div class="footer-bottom">
+          <p>&copy; 2026 NEXUS SUBS. Tous droits réservés.</p>
+          <div class="footer-payment-badges">
+            <span>Stripe (CB / Apple Pay / Google Pay)</span>
+            <span>•</span>
+            <span>PayPal</span>
+            <span>•</span>
+            <span>Virement SEPA Instant QR</span>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <!-- Bouton Flottant Permanent de Discussion Client (Accessible à tout moment) -->
+    <button
+      type="button"
+      id="floating-chat-launcher"
+      class="floating-chat-launcher"
+      data-action="open-discussion"
+      aria-label="Ouvrir la boîte de discussion en direct avec un conseiller"
+    >
+      <span class="floating-chat-icon" aria-hidden="true">💬</span>
+      <span class="floating-chat-label">Discuter en direct</span>
+      <span id="floating-chat-unread" class="floating-chat-badge hidden">0</span>
+    </button>
+
+    <!-- Cart Slide-Over Drawer -->
+    <div id="cart-overlay" class="cart-overlay" aria-hidden="true"></div>
+    <aside id="cart-drawer" class="cart-drawer" aria-labelledby="cart-drawer-heading">
+      <div class="cart-drawer-header">
+        <div class="cart-header-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20" aria-hidden="true">
+            <circle cx="8" cy="21" r="1" />
+            <circle cx="19" cy="21" r="1" />
+            <path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" />
+          </svg>
+          <h2 id="cart-drawer-heading">Votre Panier</h2>
+        </div>
+        <button type="button" class="cart-close-btn" data-action="close-cart" aria-label="Fermer le panier">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <div id="cart-items-container" class="cart-items-container"></div>
+      <div id="cart-summary-container" class="cart-summary-container"></div>
+    </aside>
+
+    <!-- Native Modal Dialogs (No role="dialog" or aria-modal per Modern Web Guidance) -->
+    <dialog id="product-detail-dialog" class="modal-container" aria-labelledby="product-dialog-title" closedby="any">
+      <div id="product-detail-dialog-content"></div>
+    </dialog>
+
+    <dialog id="checkout-dialog" class="modal-container checkout-modal-container" aria-labelledby="checkout-dialog-title" closedby="any">
+      <div id="checkout-dialog-content"></div>
+    </dialog>
+
+    <dialog id="order-live-dialog" class="modal-container order-live-modal-container" aria-labelledby="order-live-dialog-title" closedby="any">
+      <div id="order-live-dialog-content"></div>
+    </dialog>
+
+    <dialog id="discussion-dialog" class="modal-container discussion-modal-container" aria-labelledby="discussion-dialog-title" closedby="any">
+      <div id="discussion-dialog-content"></div>
+    </dialog>
+
+    <dialog id="rescue-dialog" class="modal-container rescue-modal-container" aria-labelledby="rescue-dialog-title" closedby="any">
+      <div id="rescue-dialog-content"></div>
+    </dialog>
+
+    <dialog id="legal-dialog" class="modal-container legal-modal-container" aria-labelledby="legal-dialog-title" closedby="any">
+      <div id="legal-dialog-content"></div>
+    </dialog>
+
+    <dialog id="admin-dialog" class="modal-container admin-modal-container" aria-labelledby="admin-dialog-title" closedby="any">
+      <div id="admin-dialog-content"></div>
+    </dialog>
+
+    <dialog id="admin-deliver-dialog" class="modal-container admin-deliver-modal-container" aria-labelledby="admin-deliver-dialog-title" closedby="any">
+      <div id="admin-deliver-dialog-content"></div>
+    </dialog>
+
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+    <script type="module" src="/src/scripts/main.js"></script>
+  </body>
+</html>
