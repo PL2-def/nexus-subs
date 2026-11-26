@@ -9,6 +9,7 @@ import {
   decryptObject,
   createRollingBackupIfDue
 } from "./security.js";
+import { scheduleRemoteSync } from "./remote-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.resolve(__dirname, "..", "data");
@@ -425,6 +426,7 @@ class StoreDB {
     fs.writeFileSync(tmpFile, serializeWithEncryption(this.data), "utf8");
     fs.renameSync(tmpFile, DB_FILE);
     createRollingBackupIfDue(DB_FILE);
+    scheduleRemoteSync("nexus-store.json");
   }
 
   createAdminSession(email) {

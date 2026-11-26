@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { scheduleRemoteSync } from "./remote-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.resolve(__dirname, "..", "data");
@@ -126,6 +127,7 @@ export function appendRescueLedger(eventType, payload) {
       payload
     });
     fs.appendFileSync(RESCUE_LEDGER_FILE, entry + "\n", "utf8");
+    scheduleRemoteSync("orders-rescue.jsonl");
   } catch (err) {
     console.error("[Rescue Ledger Error]", err.message);
   }

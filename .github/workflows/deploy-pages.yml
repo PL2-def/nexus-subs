@@ -1,4 +1,8 @@
-name: Deploy NEXUS SUBS to GitHub Pages
+name: Redirect GitHub Pages to live server
+
+# Le site complet (frontend + API + base de données) est hébergé sur Render.
+# GitHub Pages ne peut pas exécuter le serveur Node : cette page redirige donc
+# les visiteurs de l'ancienne adresse *.github.io vers le vrai site (en conservant #admin, ?order=…).
 
 on:
   push:
@@ -18,20 +22,29 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Build production bundle
-        run: npm run build
+      - name: Build redirect page
+        env:
+          TARGET: ${{ vars.RENDER_URL || 'https://nexus-subs.onrender.com' }}
+        run: |
+          mkdir -p site
+          cat > site/index.html <<'EOF'
+          <!doctype html>
+          <html lang="fr">
+          <head>
+            <meta charset="utf-8">
+            <meta name="robots" content="noindex">
+            <title>NEXUS SUBS — Redirection</title>
+            <meta http-equiv="refresh" content="0; url=__TARGET__/">
+            <link rel="canonical" href="__TARGET__/">
+            <script>location.replace("__TARGET__/" + location.search + location.hash);</script>
+          </head>
+          <body style="font-family:system-ui;background:#0b0b12;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0">
+            <p>Redirection vers <a style="color:#8b5cf6" href="__TARGET__/">NEXUS SUBS</a>…</p>
+          </body>
+          </html>
+          EOF
+          sed -i "s#__TARGET__#${TARGET%/}#g" site/index.html
+          cp site/index.html site/404.html
 
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
@@ -39,7 +52,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: "./dist"
+          path: "./site"
 
   deploy:
     environment:

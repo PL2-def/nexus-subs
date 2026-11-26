@@ -1,0 +1,26 @@
+# Blueprint Render (offre gratuite) — déploiement 1 clic :
+# https://render.com/deploy?repo=https://github.com/PL2-def/nexus-subs
+services:
+  - type: web
+    name: nexus-subs
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    autoDeploy: true
+    buildCommand: npm install --include=dev --no-audit --no-fund && npm run build
+    startCommand: node server/start.js
+    healthCheckPath: /api/bootstrap
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Persistance des données dans un dépôt GitHub privé (le disque Render Free est éphémère)
+      - key: GITHUB_DATA_REPO
+        value: PL2-def/nexus-subs-data
+      - key: GITHUB_DATA_BRANCH
+        value: main
+      - key: GITHUB_DATA_TOKEN
+        sync: false
+      # Clé de chiffrement AES-256 des secrets/identifiants livrés (à conserver précieusement)
+      - key: VAULT_SECRET_KEY
+        sync: false

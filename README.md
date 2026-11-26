@@ -62,3 +62,22 @@ npm run dev
 # 3. Compiler et lancer en production (Serveur unifié sur http://localhost:3000)
 npm start
 ```
+
+---
+
+## Hébergement Gratuit en Ligne (Render Free + GitHub)
+
+| Élément | Service gratuit |
+| --- | --- |
+| Serveur Node/Express + frontend + SSE | **Render** (offre Free, `render.yaml`) |
+| Base de données (`nexus-store.json` + journal de secours) | Dépôt GitHub **privé** `PL2-def/nexus-subs-data` (1 commit par modification = historique de sauvegarde complet) |
+| Anti-mise en veille | GitHub Actions `keep-alive.yml` (ping toutes les 10 min) |
+| Ancienne adresse `*.github.io` | Redirige automatiquement vers le serveur Render |
+
+Le disque de Render Free est effacé à chaque redémarrage : `server/start.js` restaure donc les données depuis le dépôt privé au démarrage, puis `server/remote-store.js` y pousse chaque modification (toutes les ~4 s) et vide la file avant l'arrêt.
+
+**Déploiement** : https://render.com/deploy?repo=https://github.com/PL2-def/nexus-subs puis renseigner :
+- `GITHUB_DATA_TOKEN` : jeton GitHub *fine-grained* limité au dépôt `nexus-subs-data` (permission **Contents : Read and write**).
+- `VAULT_SECRET_KEY` : clé de chiffrement (conservez-la : sans elle, les secrets chiffrés sont illisibles).
+
+Si l'URL attribuée par Render n'est pas `https://nexus-subs.onrender.com`, créez la variable de dépôt GitHub `RENDER_URL` (Settings → Secrets and variables → Actions → Variables) avec la bonne URL.
