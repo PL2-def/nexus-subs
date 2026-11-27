@@ -4,6 +4,7 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { db, hashPassword, verifyPassword, dummyPasswordCheck } from "./db.js";
+import { remoteEnabled, isRemoteRestored, restoreFromRemote } from "./remote-store.js";
 import {
   getPrivacyClientHash,
   signOrderRescueProof,
@@ -3237,6 +3238,17 @@ function maskSecret(val) {
   if (!s) return "";
   if (s.length <= 8) return "••••••••";
   return `${s.slice(0, 7)}••••••••${s.slice(-4)}`;
+}
+
+// Si le serveur est lancé directement via `node server/index.js` sur Render sans passer par `start.js`,
+// restaurer quand même le dépôt distant avant d'accepter des requêtes.
+if (remoteEnabled && !isRemoteRestored()) {
+  try {
+    await restoreFromRemote();
+    db.load();
+  } catch (err) {
+    console.error("[NEXUS API] Erreur restauration distante au démarrage:", err.message);
+  }
 }
 
 app.listen(PORT, () => {

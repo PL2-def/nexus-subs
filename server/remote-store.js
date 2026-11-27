@@ -33,6 +33,9 @@ export const SYNCED_FILES = ["nexus-store.json", "orders-rescue.jsonl"];
 export const remoteEnabled = Boolean(REPO && TOKEN);
 
 let restored = false;
+export function isRemoteRestored() {
+  return restored;
+}
 const states = new Map();
 
 function st(name) {

@@ -442,6 +442,7 @@ class StoreDB {
             }
           }
         };
+        this.applyEnvAdminOverrideIfSet();
         this.save();
         return;
       } catch (err) {
@@ -450,7 +451,33 @@ class StoreDB {
       }
     }
     this.data = createDefaultStore();
+    this.applyEnvAdminOverrideIfSet();
     this.save();
+  }
+
+  /**
+   * Si ADMIN_EMAIL et/ou ADMIN_PASSWORD sont définis dans les variables d'environnement (ex: Render),
+   * applique ces identifiants dès qu'ils changent (via signature SHA-256), sans écraser les futures
+   * modifications faites depuis l'interface Admin.
+   */
+  applyEnvAdminOverrideIfSet() {
+    const envEmail = String(process.env.ADMIN_EMAIL || "").trim();
+    const envPass = String(process.env.ADMIN_PASSWORD || "");
+    if (!envEmail && envPass.length < 8) return;
+
+    const sig = crypto.createHash("sha256").update(`${envEmail}|${envPass}`).digest("hex").slice(0, 24);
+    if (this.data.admin?.appliedEnvSig === sig) return;
+
+    if (envEmail) {
+      this.data.admin.email = envEmail;
+    }
+    if (envPass.length >= 8) {
+      const { salt, hash } = hashPassword(envPass);
+      this.data.admin.passwordSalt = salt;
+      this.data.admin.passwordHash = hash;
+    }
+    this.data.admin.appliedEnvSig = sig;
+    console.log("[DB] Identifiants Admin synchronisés depuis les variables d'environnement.");
   }
 
   save() {
