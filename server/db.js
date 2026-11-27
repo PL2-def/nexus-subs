@@ -290,6 +290,7 @@ function createDefaultStore() {
         barkEnabled: true,
         barkUrl: process.env.BARK_URL || "",
         barkCritical: true,
+        barkSound: process.env.BARK_SOUND || "mm",
         ntfyEnabled: true,
         ntfyServer: "https://ntfy.sh",
         ntfyTopic: `nexus-enzo-${randomTopicSuffix}`,

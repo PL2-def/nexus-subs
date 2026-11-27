@@ -58,13 +58,14 @@ export async function sendMobilePushNotification({
   if (barkTarget) {
     try {
       const isUrgent = numericPriority >= 4;
+      const barkSound = String(cfg.barkSound || "mm").trim() || "mm";
       const barkPayload = {
         device_key: barkTarget.deviceKey,
         title: cleanTitle,
         body: cleanMessage,
         level: isUrgent ? (cfg.barkCritical !== false ? "critical" : "timeSensitive") : "active",
         volume: 10,
-        sound: "alarm",
+        sound: barkSound,
         group: "NEXUS SUBS"
       };
       if (validClickUrl) {

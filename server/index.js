@@ -2614,6 +2614,7 @@ app.get("/api/admin/dashboard", requireAdmin, async (_req, res) => {
         barkEnabled: s.notifications.barkEnabled !== false,
         barkUrl: s.notifications.barkUrl || "",
         barkCritical: s.notifications.barkCritical !== false,
+        barkSound: s.notifications.barkSound || "mm",
         ntfyEnabled: s.notifications.ntfyEnabled,
         ntfyServer: s.notifications.ntfyServer,
         ntfyTopic: s.notifications.ntfyTopic,
@@ -3179,6 +3180,7 @@ app.put("/api/admin/settings", requireAdmin, async (req, res) => {
     if (nf.barkEnabled !== undefined) s.notifications.barkEnabled = Boolean(nf.barkEnabled);
     if (nf.barkUrl !== undefined) s.notifications.barkUrl = String(nf.barkUrl).trim();
     if (nf.barkCritical !== undefined) s.notifications.barkCritical = Boolean(nf.barkCritical);
+    if (nf.barkSound !== undefined) s.notifications.barkSound = String(nf.barkSound).trim() || "mm";
     if (nf.ntfyEnabled !== undefined) s.notifications.ntfyEnabled = Boolean(nf.ntfyEnabled);
     if (nf.ntfyServer !== undefined) s.notifications.ntfyServer = String(nf.ntfyServer).trim() || "https://ntfy.sh";
     if (nf.ntfyTopic !== undefined && String(nf.ntfyTopic).trim()) s.notifications.ntfyTopic = String(nf.ntfyTopic).trim();

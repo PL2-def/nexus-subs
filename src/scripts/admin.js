@@ -1380,12 +1380,16 @@ class AdminController {
                 <label class="form-label">URL ou Clé Bark (ex: https://api.day.app/TaCleIci)</label>
                 <input type="text" id="cfg-bark-url" class="form-control" value="${escapeHtml(s.notifications.barkUrl || "")}" placeholder="https://api.day.app/..." />
               </div>
-              <div class="form-group" style="display:flex;align-items:flex-end;">
-                <label class="inline-check-pill" style="height:40px;">
-                  <input type="checkbox" id="cfg-bark-critical" ${s.notifications.barkCritical !== false ? "checked" : ""} />
-                  <span>🔊 Alerte Critique (sonne même en Silencieux)</span>
-                </label>
+              <div class="form-group">
+                <label class="form-label">Son Bark (custom ou intégré)</label>
+                <input type="text" id="cfg-bark-sound" class="form-control" value="${escapeHtml(s.notifications.barkSound || "mm")}" placeholder="mm" />
               </div>
+            </div>
+            <div style="margin-top:6px;">
+              <label class="inline-check-pill">
+                <input type="checkbox" id="cfg-bark-critical" ${s.notifications.barkCritical !== false ? "checked" : ""} />
+                <span>🔊 Alerte Critique (sonne même en Silencieux)</span>
+              </label>
             </div>
             <div style="font-size:12px;line-height:1.5;color:#cbd5e1;margin-top:6px;">
               <strong>Installation en 30 secondes :</strong> 1. Installez l'app gratuite <strong>Bark</strong> sur l'App Store → 2. Autorisez les notifications &amp; Alertes critiques → 3. Copiez votre lien <code>https://api.day.app/...</code> dans Bark et collez-le ci-dessus → 4. Cliquez sur <strong>Enregistrer</strong> puis <strong>Tester</strong> !
@@ -2114,6 +2118,7 @@ class AdminController {
         notifications: {
           barkEnabled: container.querySelector("#cfg-bark-enabled").checked,
           barkUrl: container.querySelector("#cfg-bark-url").value,
+          barkSound: container.querySelector("#cfg-bark-sound").value,
           barkCritical: container.querySelector("#cfg-bark-critical").checked,
           ntfyEnabled: container.querySelector("#cfg-ntfy-enabled").checked,
           ntfyTopic: container.querySelector("#cfg-ntfy-topic").value,
