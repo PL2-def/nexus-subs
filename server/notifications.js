@@ -11,9 +11,28 @@ const NTFY_PRIORITY_MAP = {
   max: 5
 };
 
+function parseBarkTarget(rawBark) {
+  const trimmed = String(rawBark || "").trim().replace(/\/+$/, "");
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const u = new URL(trimmed);
+      const segs = u.pathname.split("/").filter(Boolean);
+      const deviceKey = segs[0] || "";
+      if (!deviceKey) return null;
+      return { origin: u.origin, deviceKey };
+    } catch {
+      return null;
+    }
+  }
+  return { origin: "https://api.day.app", deviceKey: trimmed };
+}
+
 /**
- * Envoie une notification push instantanée en priorité URGENTE (5) sur l'iPhone/Android de l'admin via ntfy.sh (JSON UTF-8)
- * + Webhook optionnel (Discord / Telegram / Slack).
+ * Envoie une notification push instantanée en priorité URGENTE/CRITIQUE sur l'iPhone/Android de l'admin :
+ * 1. Bark (iPhone natif, 100% gratuit, sans limite d'IP, alertes Critiques / Sensibles au temps)
+ * 2. ntfy.sh (JSON UTF-8, priorité 5, avec support du Token anti-429)
+ * 3. Webhook optionnel (Discord / Telegram / Slack)
  */
 export async function sendMobilePushNotification({
   title,
@@ -23,15 +42,51 @@ export async function sendMobilePushNotification({
   clickUrl = ""
 }) {
   const cfg = db.data.settings.notifications;
-  const results = { ntfy: false, webhook: false, errors: [] };
+  const results = { bark: false, ntfy: false, webhook: false, errors: [] };
+
+  const cleanTitle = String(title || "Alerte NEXUS SUBS").replace(/[\r\n]+/g, " ").slice(0, 140);
+  const cleanMessage = String(message || "").slice(0, 3500);
+  const validClickUrl = clickUrl && /^https?:\/\//i.test(clickUrl) ? clickUrl : "";
 
   const numericPriority =
     typeof priority === "number"
       ? Math.min(5, Math.max(1, Math.round(priority)))
       : NTFY_PRIORITY_MAP[String(priority || "urgent").toLowerCase()] || 5;
 
-  // 1. ntfy.sh Push Mobile (iOS Time-Sensitive / Urgent & Android) en JSON UTF-8
-  // (Le POST JSON vers la racine évite le crash Node fetch ByteString sur les emojis et accents français)
+  // 1. Bark Push iPhone (gratuit, sans compte, sans limite d'IP, Alertes Critiques iOS)
+  const barkTarget = cfg.barkEnabled !== false ? parseBarkTarget(cfg.barkUrl) : null;
+  if (barkTarget) {
+    try {
+      const isUrgent = numericPriority >= 4;
+      const barkPayload = {
+        device_key: barkTarget.deviceKey,
+        title: cleanTitle,
+        body: cleanMessage,
+        level: isUrgent ? (cfg.barkCritical !== false ? "critical" : "timeSensitive") : "active",
+        volume: 10,
+        sound: "alarm",
+        group: "NEXUS SUBS"
+      };
+      if (validClickUrl) {
+        barkPayload.url = validClickUrl;
+      }
+
+      const resp = await fetch(`${barkTarget.origin}/push`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify(barkPayload)
+      });
+      results.bark = resp.ok;
+      if (!resp.ok) {
+        const errBody = await resp.text().catch(() => "");
+        results.errors.push(`Bark HTTP ${resp.status}${errBody ? `: ${errBody.slice(0, 100)}` : ""}`);
+      }
+    } catch (err) {
+      results.errors.push(`Bark: ${err.message}`);
+    }
+  }
+
+  // 2. ntfy.sh Push Mobile (iOS Time-Sensitive / Urgent & Android) en JSON UTF-8
   if (cfg.ntfyEnabled && cfg.ntfyTopic) {
     try {
       const baseServer = (cfg.ntfyServer || "https://ntfy.sh").replace(/\/+$/, "");
@@ -44,35 +99,46 @@ export async function sendMobilePushNotification({
 
       const payload = {
         topic: String(cfg.ntfyTopic).trim(),
-        title: String(title || "Alerte NEXUS SUBS").replace(/[\r\n]+/g, " ").slice(0, 140),
-        message: String(message || "").slice(0, 3500),
+        title: cleanTitle,
+        message: cleanMessage,
         priority: numericPriority,
         tags: tagList
       };
 
-      if (clickUrl && /^https?:\/\//i.test(clickUrl)) {
-        payload.click = clickUrl;
+      if (validClickUrl) {
+        payload.click = validClickUrl;
         payload.actions = [
           {
             action: "view",
             label: "Ouvrir l'Admin",
-            url: clickUrl,
+            url: validClickUrl,
             clear: true
           }
         ];
       }
 
+      const headers = {
+        "Content-Type": "application/json; charset=utf-8"
+      };
+      if (cfg.ntfyToken && String(cfg.ntfyToken).trim()) {
+        headers.Authorization = `Bearer ${String(cfg.ntfyToken).trim()}`;
+      }
+
       const resp = await fetch(baseServer, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json; charset=utf-8"
-        },
+        headers,
         body: JSON.stringify(payload)
       });
       results.ntfy = resp.ok;
       if (!resp.ok) {
-        const errBody = await resp.text().catch(() => "");
-        results.errors.push(`ntfy HTTP ${resp.status}${errBody ? `: ${errBody.slice(0, 120)}` : ""}`);
+        if (resp.status === 429) {
+          results.errors.push(
+            "ntfy.sh a atteint sa limite gratuite sur l'IP partagée du serveur (429). Utilisez Bark (gratuit iPhone sans limite) ou ajoutez un Token ntfy."
+          );
+        } else {
+          const errBody = await resp.text().catch(() => "");
+          results.errors.push(`ntfy HTTP ${resp.status}${errBody ? `: ${errBody.slice(0, 120)}` : ""}`);
+        }
       }
     } catch (err) {
       results.errors.push(`ntfy: ${err.message}`);

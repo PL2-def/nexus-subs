@@ -2611,9 +2611,13 @@ app.get("/api/admin/dashboard", requireAdmin, async (_req, res) => {
         sepa: { ...s.payments.sepa }
       },
       notifications: {
+        barkEnabled: s.notifications.barkEnabled !== false,
+        barkUrl: s.notifications.barkUrl || "",
+        barkCritical: s.notifications.barkCritical !== false,
         ntfyEnabled: s.notifications.ntfyEnabled,
         ntfyServer: s.notifications.ntfyServer,
         ntfyTopic: s.notifications.ntfyTopic,
+        hasNtfyToken: Boolean((s.notifications.ntfyToken || "").trim()),
         webhookUrl: s.notifications.webhookUrl,
         smtp: {
           enabled: s.notifications.smtp.enabled,
@@ -3172,9 +3176,15 @@ app.put("/api/admin/settings", requireAdmin, async (req, res) => {
 
   if (b.notifications) {
     const nf = b.notifications;
+    if (nf.barkEnabled !== undefined) s.notifications.barkEnabled = Boolean(nf.barkEnabled);
+    if (nf.barkUrl !== undefined) s.notifications.barkUrl = String(nf.barkUrl).trim();
+    if (nf.barkCritical !== undefined) s.notifications.barkCritical = Boolean(nf.barkCritical);
     if (nf.ntfyEnabled !== undefined) s.notifications.ntfyEnabled = Boolean(nf.ntfyEnabled);
     if (nf.ntfyServer !== undefined) s.notifications.ntfyServer = String(nf.ntfyServer).trim() || "https://ntfy.sh";
     if (nf.ntfyTopic !== undefined && String(nf.ntfyTopic).trim()) s.notifications.ntfyTopic = String(nf.ntfyTopic).trim();
+    if (nf.ntfyToken !== undefined && !String(nf.ntfyToken).includes("••••")) {
+      s.notifications.ntfyToken = String(nf.ntfyToken).trim();
+    }
     if (nf.webhookUrl !== undefined) s.notifications.webhookUrl = String(nf.webhookUrl).trim();
     if (nf.smtp) {
       if (nf.smtp.enabled !== undefined) s.notifications.smtp.enabled = Boolean(nf.smtp.enabled);

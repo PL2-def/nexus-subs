@@ -287,9 +287,13 @@ function createDefaultStore() {
         }
       },
       notifications: {
+        barkEnabled: true,
+        barkUrl: process.env.BARK_URL || "",
+        barkCritical: true,
         ntfyEnabled: true,
         ntfyServer: "https://ntfy.sh",
         ntfyTopic: `nexus-enzo-${randomTopicSuffix}`,
+        ntfyToken: process.env.NTFY_TOKEN || "",
         webhookUrl: "",
         smtp: {
           enabled: false,
@@ -352,6 +356,10 @@ function decryptInMemory(storeObj) {
   if (storeObj.settings?.notifications?.smtp) {
     storeObj.settings.notifications.smtp.pass = decryptText(storeObj.settings.notifications.smtp.pass);
   }
+  if (storeObj.settings?.notifications) {
+    storeObj.settings.notifications.ntfyToken = decryptText(storeObj.settings.notifications.ntfyToken);
+    storeObj.settings.notifications.barkUrl = decryptText(storeObj.settings.notifications.barkUrl);
+  }
   if (Array.isArray(storeObj.orders)) {
     for (const o of storeObj.orders) {
       if (o.deliveredAccess) {
@@ -374,6 +382,10 @@ function serializeWithEncryption(storeObj) {
   }
   if (clone.settings?.notifications?.smtp) {
     clone.settings.notifications.smtp.pass = encryptText(clone.settings.notifications.smtp.pass);
+  }
+  if (clone.settings?.notifications) {
+    clone.settings.notifications.ntfyToken = encryptText(clone.settings.notifications.ntfyToken);
+    clone.settings.notifications.barkUrl = encryptText(clone.settings.notifications.barkUrl);
   }
   if (Array.isArray(clone.orders)) {
     for (const o of clone.orders) {

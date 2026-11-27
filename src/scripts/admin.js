@@ -1362,9 +1362,34 @@ class AdminController {
       <form id="admin-settings-master-form" class="admin-integrations-stack">
         <div class="integration-panel highlight-integration">
           <div class="integration-head">
-            <span class="legal-tag">iPhone (iOS) &amp; Android • Priorité URGENTE (5/5)</span>
+            <span class="legal-tag">iPhone (iOS) • Priorité CRITIQUE &amp; URGENTE</span>
             <h2>🚨 Notifications urgentes sur votre iPhone</h2>
-            <p>Chaque <strong>achat</strong>, <strong>paiement</strong> et <strong>message client</strong> envoie immédiatement une alerte en <strong>priorité urgente (Time-Sensitive iOS)</strong> sur votre iPhone via l'application gratuite <strong>ntfy</strong>.</p>
+            <p>Chaque <strong>achat</strong>, <strong>paiement</strong> et <strong>message client</strong> envoie immédiatement une alerte urgente sur votre iPhone. <strong>Recommandé : Bark (iPhone)</strong> — 100% gratuit, sans aucune limite de quota et sonne même en mode Silencieux / Ne pas déranger !</p>
+          </div>
+
+          <div style="padding:14px 16px;border-radius:12px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.35);margin-bottom:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+              <strong style="color:#f8fafc;font-size:15px;">🍎 Bark — Spécial iPhone (Recommandé, 0 limite)</strong>
+              <label class="inline-check-pill">
+                <input type="checkbox" id="cfg-bark-enabled" ${s.notifications.barkEnabled !== false ? "checked" : ""} />
+                <span>Activer Bark iPhone</span>
+              </label>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">URL ou Clé Bark (ex: https://api.day.app/TaCleIci)</label>
+                <input type="text" id="cfg-bark-url" class="form-control" value="${escapeHtml(s.notifications.barkUrl || "")}" placeholder="https://api.day.app/..." />
+              </div>
+              <div class="form-group" style="display:flex;align-items:flex-end;">
+                <label class="inline-check-pill" style="height:40px;">
+                  <input type="checkbox" id="cfg-bark-critical" ${s.notifications.barkCritical !== false ? "checked" : ""} />
+                  <span>🔊 Alerte Critique (sonne même en Silencieux)</span>
+                </label>
+              </div>
+            </div>
+            <div style="font-size:12px;line-height:1.5;color:#cbd5e1;margin-top:6px;">
+              <strong>Installation en 30 secondes :</strong> 1. Installez l'app gratuite <strong>Bark</strong> sur l'App Store → 2. Autorisez les notifications &amp; Alertes critiques → 3. Copiez votre lien <code>https://api.day.app/...</code> dans Bark et collez-le ci-dessus → 4. Cliquez sur <strong>Enregistrer</strong> puis <strong>Tester</strong> !
+            </div>
           </div>
 
           <div class="ntfy-setup-grid">
@@ -1376,7 +1401,7 @@ class AdminController {
             <div class="ntfy-fields-col">
               <label class="inline-check-pill">
                 <input type="checkbox" id="cfg-ntfy-enabled" ${s.notifications.ntfyEnabled ? "checked" : ""} />
-                <span>Activer les alertes urgentes sur iPhone</span>
+                <span>Activer aussi ntfy.sh (optionnel)</span>
               </label>
               <div class="form-row">
                 <div class="form-group">
@@ -1384,28 +1409,27 @@ class AdminController {
                   <input type="text" id="cfg-ntfy-topic" class="form-control" value="${escapeHtml(s.notifications.ntfyTopic)}" />
                 </div>
                 <div class="form-group">
+                  <label class="form-label">Token ntfy (optionnel, évite la limite 429)</label>
+                  <input type="password" id="cfg-ntfy-token" class="form-control" placeholder="${s.notifications.hasNtfyToken ? "Token enregistré (chiffré)" : "tk_... (ntfy.sh/app → Account)"}" />
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
                   <label class="form-label">URL publique du site</label>
                   <input type="text" id="cfg-public-url" class="form-control" value="${escapeHtml(s.publicUrl || "")}" placeholder="https://mon-site.fr" />
                 </div>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Webhook Discord / Slack (facultatif)</label>
-                <input type="url" id="cfg-webhook-url" class="form-control" value="${escapeHtml(s.notifications.webhookUrl || "")}" placeholder="https://discord.com/api/webhooks/..." />
+                <div class="form-group">
+                  <label class="form-label">Webhook Discord / Slack (facultatif)</label>
+                  <input type="url" id="cfg-webhook-url" class="form-control" value="${escapeHtml(s.notifications.webhookUrl || "")}" placeholder="https://discord.com/api/webhooks/..." />
+                </div>
               </div>
               <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
                 <button type="button" class="btn btn-secondary btn-xs" id="btn-test-phone-push">
                   🚨 Envoyer une alerte URGENTE de test sur mon iPhone
                 </button>
                 <a class="btn btn-secondary btn-xs" href="ntfy://ntfy.sh/${encodeURIComponent(s.notifications.ntfyTopic || "")}">
-                  📲 Ouvrir directement dans l'app ntfy (iPhone)
+                  📲 Ouvrir dans ntfy
                 </a>
-              </div>
-              <div style="margin-top:8px;padding:10px 12px;border-radius:10px;background:rgba(139,92,246,0.1);border:1px solid rgba(139,92,246,0.28);font-size:12px;line-height:1.5;color:#cbd5e1;">
-                <strong style="color:#f8fafc;">Configuration iPhone (1 minute) :</strong><br />
-                1. Téléchargez <strong>ntfy</strong> gratuitement sur l'App Store.<br />
-                2. Ouvrez <strong>ntfy</strong> → touchez <strong>+</strong> → collez le sujet privé <code>${escapeHtml(s.notifications.ntfyTopic)}</code>.<br />
-                3. Dans <strong>Réglages iPhone → Notifications → ntfy</strong> : activez <strong>Notifications urgentes (Sensibles au temps)</strong> + <strong>Sons</strong>.<br />
-                4. Dans <strong>Réglages → Concentration → Ne pas déranger → Apps</strong> : autorisez <strong>ntfy</strong> pour ne rien manquer.
               </div>
             </div>
           </div>
@@ -2048,10 +2072,15 @@ class AdminController {
       });
       const data = await resp.json();
       btn.disabled = false;
-      if (data.pushRes?.ntfy || data.pushRes?.webhook) {
-        showToast("Notification envoyée sur votre téléphone !", "success");
+      if (data.pushRes?.bark || data.pushRes?.ntfy || data.pushRes?.webhook) {
+        const channels = [
+          data.pushRes.bark ? "Bark iPhone" : "",
+          data.pushRes.ntfy ? "ntfy" : "",
+          data.pushRes.webhook ? "Webhook" : ""
+        ].filter(Boolean).join(" + ");
+        showToast(`🚨 Notification urgente envoyée (${channels}) !`, "success");
       } else {
-        showToast(`Info : ${data.pushRes?.errors?.join(", ") || "Vérifiez votre connexion"}`, "info");
+        showToast(`Info : ${data.pushRes?.errors?.join(" • ") || "Configurez Bark iPhone ou ntfy ci-dessus"}`, "info");
       }
     });
 
@@ -2083,8 +2112,12 @@ class AdminController {
           }
         },
         notifications: {
+          barkEnabled: container.querySelector("#cfg-bark-enabled").checked,
+          barkUrl: container.querySelector("#cfg-bark-url").value,
+          barkCritical: container.querySelector("#cfg-bark-critical").checked,
           ntfyEnabled: container.querySelector("#cfg-ntfy-enabled").checked,
           ntfyTopic: container.querySelector("#cfg-ntfy-topic").value,
+          ntfyToken: container.querySelector("#cfg-ntfy-token").value,
           webhookUrl: container.querySelector("#cfg-webhook-url").value,
           smtp: {
             enabled: container.querySelector("#cfg-smtp-enabled").checked,
