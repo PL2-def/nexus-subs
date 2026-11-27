@@ -33,7 +33,6 @@ const ANNOYED_PATTERNS = [
   /\bhonte/i,
   /\bscandale/i,
   /\binadmissible/i,
-  /\brembours/i,
   /\bplainte\b/i,
   /\blitige\b/i,
   /\bmarre\b/i,

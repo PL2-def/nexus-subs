@@ -1,7 +1,7 @@
 /**
  * Boîte de Dialogue Client en Direct (#order-live-dialog) :
  * - Coffre-fort de confidentialité : masquage par défaut des mots de passe & PIN (révélation auto-masquée 15s)
- * - Garantie Zéro Perte : Téléchargement du Certificat de Preuve d'Achat signé + File de secours hors-ligne
+ * - Suivi Sécurisé : Téléchargement du Certificat de Preuve d'Achat signé + File de secours hors-ligne
  * - Réception instantanée SSE + Messagerie directe avec le vendeur
  */
 
@@ -56,7 +56,7 @@ export function renderOrderLookupView() {
         <div class="checkout-lock-badge" aria-hidden="true">📦</div>
         <div>
           <h1 id="order-live-dialog-title" class="checkout-title">Mes Accès &amp; Suivi de Commande</h1>
-          <p class="checkout-subtitle">Retrouvez vos identifiants chiffrés ou activez le Secours Zéro Perte</p>
+          <p class="checkout-subtitle">Retrouvez vos identifiants chiffrés ou contactez l'Assistance Commande</p>
         </div>
       </div>
       <button type="button" class="btn-close-dialog" data-close-live-dialog aria-label="Fermer">
@@ -262,7 +262,7 @@ function renderLiveOrderContent({ preserveChatInput = false } = {}) {
         </div>
       </div>
       <div class="header-dialog-btns">
-        <button type="button" class="btn btn-outline btn-xs" id="btn-download-proof" title="Télécharger votre certificat signé anti-perte">
+        <button type="button" class="btn btn-outline btn-xs" id="btn-download-proof" title="Télécharger votre certificat de commande signé">
           💾 Preuve d'achat (.txt)
         </button>
         <button type="button" class="btn btn-outline btn-xs" id="btn-switch-order-lookup">Mes commandes</button>
@@ -331,7 +331,7 @@ function renderLiveOrderContent({ preserveChatInput = false } = {}) {
           </ul>
           ${
             ord.proofSignature
-              ? `<p style="font-size:0.72rem;color:var(--text-subtle);margin-top:0.65rem;">Empreinte de sécurité anti-perte : <code>${escapeHtml(ord.proofSignature)}</code></p>`
+              ? `<p style="font-size:0.72rem;color:var(--text-subtle);margin-top:0.65rem;">Empreinte de vérification de commande : <code>${escapeHtml(ord.proofSignature)}</code></p>`
               : ""
           }
         </div>

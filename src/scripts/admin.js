@@ -198,13 +198,15 @@ class AdminController {
         <div class="admin-modal-body">
           <form id="admin-login-form" class="admin-login-form">
             <div class="form-group">
-              <label for="admin-login-email" class="form-label">E-mail administrateur *</label>
+              <label for="admin-login-email" class="form-label">Identifiant administrateur *</label>
               <input
-                type="email"
+                type="text"
                 id="admin-login-email"
                 class="form-control"
-                value="subpassdelivrey@gmail.com"
+                value=""
+                placeholder="Saisissez votre identifiant"
                 autocomplete="username"
+                autofocus
                 required
               />
             </div>
@@ -215,9 +217,9 @@ class AdminController {
                 type="password"
                 id="admin-login-pass"
                 class="form-control"
-                placeholder="Saisissez votre mot de passe admin"
+                value=""
+                placeholder="Saisissez votre mot de passe"
                 autocomplete="current-password"
-                autofocus
                 required
               />
             </div>
@@ -979,11 +981,11 @@ class AdminController {
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label class="form-label">E-mail de connexion Admin</label>
-              <input type="email" id="cfg-admin-email" class="form-control" value="${escapeHtml(adminInfo.email)}" />
+              <label class="form-label">Identifiant de connexion Admin</label>
+              <input type="text" id="cfg-admin-email" class="form-control" value="${escapeHtml(adminInfo.email)}" />
             </div>
             <div class="form-group">
-              <label class="form-label">Changer le mot de passe Admin (recommandé)</label>
+              <label class="form-label">Changer le mot de passe Admin (min. 8 caractères)</label>
               <input type="password" id="cfg-admin-newpass" class="form-control" placeholder="Nouveau mot de passe fort" />
             </div>
           </div>
@@ -1336,11 +1338,14 @@ class AdminController {
         headers: this.authHeaders(),
         body: JSON.stringify(payload)
       });
+      const data = await resp.json().catch(() => ({}));
       if (resp.ok) {
         showToast("Configuration enregistrée et chiffrée !", "success");
         await store.initBootstrap();
         await this.refreshDashboardSilently();
         this.render();
+      } else {
+        showToast(data.error || "Erreur lors de l'enregistrement de la configuration.", "error");
       }
     });
 

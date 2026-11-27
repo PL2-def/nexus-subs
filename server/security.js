@@ -94,7 +94,7 @@ export function getPrivacyClientHash(req) {
 }
 
 /**
- * Signature cryptographique infalsifiable de preuve d'achat (Garantie Zéro Perte Client)
+ * Signature cryptographique infalsifiable de preuve d'achat (Certificat Client)
  */
 export function signOrderRescueProof(order) {
   const canonical = [

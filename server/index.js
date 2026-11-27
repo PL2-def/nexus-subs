@@ -566,8 +566,8 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
           sender: "system",
           text:
             paymentMethod === "sepa_instant"
-              ? `Commande #${orderId} enregistrée avec Garantie Zéro Perte. Scannez le QR Code SEPA ou copiez l'IBAN avec la référence ${sepaRef}, puis cliquez sur « J'ai effectué le virement ».`
-              : `Commande #${orderId} enregistrée avec Garantie Zéro Perte. Finalisez le paiement sécurisé pour recevoir vos accès ici-même et par e-mail.`,
+              ? `Commande #${orderId} enregistrée avec suivi sécurisé. Scannez le QR Code SEPA ou copiez l'IBAN avec la référence ${sepaRef}, puis cliquez sur « J'ai effectué le virement ».`
+              : `Commande #${orderId} enregistrée avec suivi sécurisé. Finalisez le paiement sécurisé pour recevoir vos accès ici-même et par e-mail.`,
           createdAt
         }
       ]
@@ -884,7 +884,7 @@ app.post("/api/orders/:orderId/messages", chatLimiter, async (req, res) => {
 
 // ============================================================================
 // Universal Live Customer Discussion System (Tous articles ou Article précis)
-// + Garantie Zéro Perte / Ticket de Secours Paiement
+// + Assistance Commande / Ticket de Secours Paiement
 // ============================================================================
 app.post("/api/discussions", chatLimiter, async (req, res) => {
   try {
@@ -919,7 +919,7 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
     const prod = productId ? db.data.products.find((p) => p.id === productId) : null;
     const topicLabel =
       topicType === "rescue"
-        ? "🛡️ Secours Paiement / Garantie Zéro Perte"
+        ? "🛡️ Assistance Commande / Suivi Prioritaire"
         : prod
         ? `Article : ${prod.title} (${prod.price} €)`
         : topicType === "order" && orderId
@@ -1033,7 +1033,7 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
   }
 });
 
-// Garantie Zéro Perte : Formulaire de Secours d'Urgence après paiement / bug
+// Suivi Sécurisé : Formulaire de Secours d'Urgence après paiement / bug
 app.post("/api/rescue-claim", orderLimiter, async (req, res) => {
   try {
     const {
@@ -1107,7 +1107,7 @@ app.post("/api/rescue-claim", orderLimiter, async (req, res) => {
         {
           id: `dmsg_sos_sys_${Date.now()}`,
           sender: "system",
-          text: `Votre dossier de Garantie Zéro Perte #${rescueId} est enregistré de façon permanente. Un administrateur vient d'être alerté en urgence sur son téléphone : vos fonds sont 100% protégés.`,
+          text: `Votre dossier d'assistance prioritaire #${rescueId} est enregistré de façon permanente. Un administrateur vient d'être alerté en urgence sur son téléphone : votre dossier est pris en charge en priorité pour la livraison de vos accès.`,
           createdAt: nowIso
         },
         {
@@ -1192,7 +1192,7 @@ app.patch("/api/discussions/:threadId/context", (req, res) => {
     thread.productTitle = prod ? prod.title : null;
     thread.topicLabel =
       topicType === "rescue"
-        ? "🛡️ Secours Paiement / Garantie Zéro Perte"
+        ? "🛡️ Assistance Commande / Suivi Prioritaire"
         : prod
         ? `Article : ${prod.title} (${prod.price} €)`
         : "Question générale (Catalogue & Boutique)";
@@ -1439,12 +1439,15 @@ app.post("/api/admin/login", async (req, res) => {
   }
 
   const { email, password } = req.body || {};
-  const cleanEmail = String(email || "").trim().toLowerCase();
+  const cleanIdentifier = String(email || "").trim().toLowerCase();
+  const rawPassword = typeof password === "string" ? password : "";
   const admin = db.data.admin;
+  const expectedIdentifier = String(admin.email || "").trim().toLowerCase();
 
-  const emailMatches = cleanEmail === admin.email.toLowerCase() || cleanEmail === "admin@nexus.fr";
+  const identifierMatches = expectedIdentifier.length > 0 && cleanIdentifier === expectedIdentifier;
+  const passwordMatches = rawPassword.length > 0 && verifyPassword(rawPassword, admin.passwordSalt, admin.passwordHash);
 
-  if (!emailMatches || !verifyPassword(String(password || ""), admin.passwordSalt, admin.passwordHash)) {
+  if (!identifierMatches || !passwordMatches) {
     // Délai anti-timing-attack
     await new Promise((r) => setTimeout(r, 350));
     const failInfo = recordAdminLoginFailure(ipHash);
@@ -1456,7 +1459,7 @@ app.post("/api/admin/login", async (req, res) => {
       });
     }
     return res.status(401).json({
-      error: `Identifiants incorrects (${Math.max(0, 5 - failInfo.count)} essai(s) restant(s) avant verrouillage temporaire).`
+      error: `Identifiant ou mot de passe incorrect (${Math.max(0, 5 - failInfo.count)} essai(s) restant(s) avant verrouillage temporaire).`
     });
   }
 
@@ -1714,7 +1717,7 @@ app.post("/api/admin/products", requireAdmin, (req, res) => {
       "Accès officiel garanti pendant toute la durée",
       "Livraison directe sur le site et par e-mail",
       "Assistance dédiée 7j/7 incluse",
-      "Garantie Zéro Perte & remplacement technique"
+      "Garantie 365j & remplacement technique"
     ],
     fullDescription: String(
       b.fullDescription || `Profitez de ${title} au meilleur tarif avec activation rapide et garantie NEXUS.`
@@ -1977,11 +1980,25 @@ app.put("/api/admin/settings", requireAdmin, async (req, res) => {
 
   if (b.adminAccount) {
     if (b.adminAccount.name) db.data.admin.name = String(b.adminAccount.name).trim();
-    if (b.adminAccount.email) db.data.admin.email = String(b.adminAccount.email).trim();
-    if (b.adminAccount.newPassword && String(b.adminAccount.newPassword).length >= 4) {
-      const { salt, hash } = hashPassword(b.adminAccount.newPassword);
+    if (b.adminAccount.email !== undefined) {
+      const nextIdentifier = String(b.adminAccount.email).trim();
+      if (!nextIdentifier) {
+        return res.status(400).json({ error: "L'identifiant administrateur ne peut pas être vide." });
+      }
+      db.data.admin.email = nextIdentifier;
+    }
+    if (b.adminAccount.newPassword !== undefined && String(b.adminAccount.newPassword).length > 0) {
+      const nextPass = String(b.adminAccount.newPassword);
+      if (nextPass.length < 8) {
+        return res.status(400).json({ error: "Le nouveau mot de passe doit contenir au moins 8 caractères." });
+      }
+      const { salt, hash } = hashPassword(nextPass);
       db.data.admin.passwordSalt = salt;
       db.data.admin.passwordHash = hash;
+      const currentToken = extractAdminToken(req);
+      for (const tok of db.sessions.keys()) {
+        if (tok !== currentToken) db.sessions.delete(tok);
+      }
     }
   }
 

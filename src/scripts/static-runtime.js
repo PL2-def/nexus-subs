@@ -4,8 +4,8 @@
  *   toutes les requêtes passent directement par le vrai serveur.
  * - Si le site est hébergé en statique pur (ex: *.github.io sans backend connecté),
  *   ce module active automatiquement un émulateur localStorage complet pour que
- *   le catalogue, le panier, le QR Code SEPA EPC, la garantie zéro perte, la boîte de dialogue
- *   et le panneau Admin (y compris le menu Discussions) fonctionnent immédiatement à 100%.
+ *   le catalogue, le panier, le QR Code SEPA EPC, le suivi sécurisé, la boîte de dialogue
+ *   et les discussions client fonctionnent immédiatement à 100%.
  */
 
 import QRCode from "qrcode";
@@ -174,8 +174,7 @@ function createInitialStaticDb() {
   return {
     admin: {
       name: "Gasc Enzo",
-      email: "subpassdelivrey@gmail.com",
-      password: "admin"
+      email: ""
     },
     settings: {
       storeName: "NEXUS SUBS",
@@ -276,7 +275,7 @@ function computeStaticDiagnostics(thread, orders) {
 
   const manual = thread.manualFlags || {};
   const isSuspectedFraud = manual.fraud === true || (manual.fraud !== false && riskScore >= 45);
-  const isAnnoyed = manual.annoyed === true || (manual.annoyed !== false && /arnaque|escroc|rembours|marre|toujours rien|nul|inadmissible|!!!|\?\?\?/i.test(allText));
+  const isAnnoyed = manual.annoyed === true || (manual.annoyed !== false && /arnaque|escroc|marre|toujours rien|nul|inadmissible|!!!|\?\?\?/i.test(allText));
   const needsFastHelp = manual.fastHelp === true || thread.topicType === "rescue" || (manual.fastHelp !== false && (/urgent|bloqué|bug|erreur|payé mais|débité|rien reçu|au secours/i.test(allText) || waitingMinutes >= 15));
 
   return {
@@ -481,7 +480,7 @@ function installStaticApiInterceptor() {
           {
             id: `msg_${Date.now()}`,
             sender: "system",
-            text: `Commande #${orderId} enregistrée avec Garantie Zéro Perte. ${paymentMethod === "sepa_instant" ? `Scannez le QR Code SEPA ou utilisez la référence ${sepaRef}.` : "Finalisez votre règlement sécurisé ci-dessus."}`,
+            text: `Commande #${orderId} enregistrée avec suivi sécurisé. ${paymentMethod === "sepa_instant" ? `Scannez le QR Code SEPA ou utilisez la référence ${sepaRef}.` : "Finalisez votre règlement sécurisé ci-dessus."}`,
             createdAt: nowIso
           }
         ]
@@ -642,7 +641,7 @@ function installStaticApiInterceptor() {
         unreadByAdmin: 1,
         unreadByCustomer: 0,
         messages: [
-          { id: `dmsg_sos_${Date.now()}`, sender: "system", text: `Dossier Garantie Zéro Perte #${rescueId} enregistré.`, createdAt: nowIso },
+          { id: `dmsg_sos_${Date.now()}`, sender: "system", text: `Dossier d'assistance prioritaire #${rescueId} enregistré.`, createdAt: nowIso },
           { id: `dmsg_sos_u_${Date.now()}`, sender: "customer", text: `Preuve: ${body.paymentProof || ""} — ${body.problemDetails || ""}`, createdAt: nowIso }
         ]
       };
@@ -685,123 +684,9 @@ function installStaticApiInterceptor() {
       return jsonResponse({ ok: true });
     }
 
-    // 7. Admin Auth & Dashboard
-    if (path === "/api/admin/login" && method === "POST") {
-      const cleanEmail = String(body.email || "").trim().toLowerCase();
-      if ((cleanEmail === db.admin.email.toLowerCase() || cleanEmail === "admin@nexus.fr") && body.password === db.admin.password) {
-        staticAdminToken = `static_adm_${randomHex(20)}`;
-        sessionStorage.setItem("nexus_static_admin_token", staticAdminToken);
-        return jsonResponse({ token: staticAdminToken, admin: { name: db.admin.name, email: db.admin.email } });
-      }
-      return jsonResponse({ error: "Identifiants administrateur incorrects." }, 401);
-    }
-
-    if (path === "/api/admin/logout" && method === "POST") {
-      staticAdminToken = "";
-      sessionStorage.removeItem("nexus_static_admin_token");
-      return jsonResponse({ ok: true });
-    }
-
-    if (path.startsWith("/api/admin/")) {
-      if (!isAdmin) return jsonResponse({ error: "Session administrateur invalide." }, 401);
-
-      if (path === "/api/admin/dashboard" && method === "GET") {
-        const enriched = db.discussions.map((t) => ({ ...t, diagnostics: computeStaticDiagnostics(t, db.orders) })).sort((a, b) => b.diagnostics.priorityScore - a.diagnostics.priorityScore);
-        const paidOrders = db.orders.filter((o) => o.paymentStatus === "paid");
-        return jsonResponse({
-          admin: { name: db.admin.name, email: db.admin.email },
-          stats: {
-            totalOrders: db.orders.length,
-            paidOrders: paidOrders.length,
-            totalRevenue: Math.round(paidOrders.reduce((s, o) => s + Number(o.total || 0), 0) * 100) / 100,
-            pendingDeliveries: db.orders.filter((o) => o.deliveryStatus !== "delivered").length,
-            openWaitingDiscussions: enriched.filter((t) => !t.diagnostics.isResolved).length,
-            urgentDiscussionsCount: enriched.filter((t) => !t.diagnostics.isResolved && (t.diagnostics.needsFastHelp || t.diagnostics.isAnnoyed)).length,
-            fraudDiscussionsCount: enriched.filter((t) => t.diagnostics.isSuspectedFraud).length,
-            unreadNotifications: 0
-          },
-          orders: db.orders,
-          discussions: enriched,
-          rescueClaims: db.rescueClaims,
-          security: { blockedEmails: db.security.blockedEmails, blockedHashesCount: 0 },
-          products: db.products,
-          coupons: db.coupons,
-          supportMessages: db.supportMessages,
-          newsletter: db.newsletter,
-          notifications: db.notifications,
-          ntfyInfo: { enabled: false, subscribeUrl: "https://ntfy.sh/nexus-subs-live", qrDataUrl: "" },
-          settings: db.settings
-        });
-      }
-
-      const admDisc = path.match(/^\/api\/admin\/discussions\/([^/]+)(\/(.+))?$/);
-      if (admDisc) {
-        const tid = decodeURIComponent(admDisc[1]);
-        const sub = admDisc[3] || "";
-        const thread = db.discussions.find((t) => t.threadId === tid);
-        if (method === "DELETE") {
-          db.discussions = db.discussions.filter((t) => t.threadId !== tid);
-          saveStaticDb(db);
-          return jsonResponse({ ok: true });
-        }
-        if (!thread) return jsonResponse({ error: "Discussion introuvable." }, 404);
-        if (sub === "read") thread.unreadByAdmin = 0;
-        if (sub === "flags") {
-          thread.manualFlags = thread.manualFlags || {};
-          if (body.status) thread.status = body.status;
-          if (body.fraud !== undefined) thread.manualFlags.fraud = body.fraud;
-          if (body.annoyed !== undefined) thread.manualFlags.annoyed = body.annoyed;
-          if (body.fastHelp !== undefined) thread.manualFlags.fastHelp = body.fastHelp;
-        }
-        saveStaticDb(db);
-        return jsonResponse({ thread: { ...thread, diagnostics: computeStaticDiagnostics(thread, db.orders) } });
-      }
-
-      const admProd = path.match(/^\/api\/admin\/products\/([^/]+)$/);
-      if (admProd && method === "PUT") {
-        const p = db.products.find((x) => x.id === decodeURIComponent(admProd[1]));
-        if (!p) return jsonResponse({ error: "Produit introuvable." }, 404);
-        Object.assign(p, body);
-        saveStaticDb(db);
-        return jsonResponse({ product: p });
-      }
-
-      const admOrd = path.match(/^\/api\/admin\/orders\/([^/]+)\/(.+)$/);
-      if (admOrd && method === "POST") {
-        const order = db.orders.find((o) => o.orderId === decodeURIComponent(admOrd[1]));
-        if (!order) return jsonResponse({ error: "Commande introuvable." }, 404);
-        if (admOrd[2] === "confirm-payment") {
-          order.paymentStatus = "paid";
-          order.paidAt = new Date().toISOString();
-        } else if (admOrd[2] === "deliver") {
-          order.paymentStatus = "paid";
-          order.deliveryStatus = "delivered";
-          order.deliveredAccess = { deliveredAt: new Date().toISOString(), channels: ["dialog"], credentials: body.credentials || [], customMessage: body.customMessage || "" };
-          order.messages.push({ id: `msg_${Date.now()}`, sender: "admin", isDeliveryNotice: true, text: "🎉 Vos accès viennent d'être livrés dans votre coffre sécurisé !", createdAt: new Date().toISOString() });
-        }
-        saveStaticDb(db);
-        return jsonResponse({ order, emailSent: false, mailtoUrl: `mailto:${order.email}` });
-      }
-
-      if (path === "/api/admin/settings" && method === "PUT") {
-        if (body.newAdminPassword && String(body.newAdminPassword).length >= 4) {
-          db.admin.password = String(body.newAdminPassword);
-        }
-        if (body.sepa) Object.assign(db.settings.payments.sepa, body.sepa);
-        if (body.paypal) Object.assign(db.settings.payments.paypal, body.paypal);
-        if (body.stripe) Object.assign(db.settings.payments.stripe, body.stripe);
-        saveStaticDb(db);
-        return jsonResponse({ ok: true });
-      }
-
-      if (path === "/api/admin/coupons" && method === "POST") {
-        const c = { code: String(body.code || "").toUpperCase(), type: body.type || "percent", value: Number(body.value || 10), label: body.label || "Promo", minAmount: Number(body.minAmount || 0), active: true, usageCount: 0 };
-        db.coupons.unshift(c);
-        saveStaticDb(db);
-        return jsonResponse({ coupon: c }, 201);
-      }
-
-      return jsonResponse({ ok: true });
+    // 7. Admin Auth & Dashboard désactivés hors-ligne (authentification serveur obligatoire)
+    if (path === "/api/admin/login" || path.startsWith("/api/admin/")) {
+      return jsonResponse({ error: "Connexion administrateur indisponible hors-ligne : serveur requis." }, 503);
     }
 
     return jsonResponse({ error: "Endpoint non disponible en mode statique." }, 404);

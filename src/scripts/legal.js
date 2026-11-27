@@ -32,10 +32,7 @@ export const LEGAL_DOCS = {
 
       <h2>Article 5 — Contenu numérique &amp; Garantie 365 Jours</h2>
       <p>
-        Conformément à l'article <strong>L.221-28 13° du Code de la consommation</strong>, la fourniture immédiate d'accès numériques pleinement exécutés avec l'accord préalable du consommateur ne ouvre pas droit au délai de rétractation de 14 jours.
-      </p>
-      <p>
-        En contrepartie, chaque forfait annuel bénéficie d'une <strong>Garantie de Continuité &amp; de Remplacement Technique de 365 jours</strong> : en cas d'interruption non imputable au Client, NEXUS SUBS rétablit le service ou fournit un accès équivalent sous 24 heures ouvrées.
+        Chaque forfait annuel bénéficie d'une <strong>Garantie de Continuité &amp; de Remplacement Technique de 365 jours</strong> : en cas d'interruption non imputable au Client, NEXUS SUBS rétablit le service ou fournit un accès équivalent sous 24 heures ouvrées.
       </p>
     `
   },
@@ -77,8 +74,8 @@ export const LEGAL_DOCS = {
       </p>
     `
   },
-  remboursements: {
-    title: "Garantie 365 Jours & Conditions d'Exécution",
+  garantie: {
+    title: "Garantie 365 Jours & Continuité de Service",
     lastUpdate: "Novembre 2026",
     content: `
       <h2>1. Garantie de Continuité 365 Jours</h2>
@@ -86,9 +83,9 @@ export const LEGAL_DOCS = {
         Chaque abonnement annuel acheté sur NEXUS SUBS est couvert pendant toute sa durée (365 jours) par notre engagement de fonctionnement continu. En cas de souci technique, notre support intervient sous 24h pour rétablir votre accès ou vous délivrer un remplacement immédiat sans aucun frais.
       </p>
 
-      <h2>2. Exécution immédiate des contenus numériques</h2>
+      <h2>2. Livraison numérique immédiate</h2>
       <p>
-        Conformément à l'article L.221-28 13° du Code de la consommation applicable aux biens et services numériques dématérialisés mis à disposition immédiatement après validation, les commandes validées sont fermes et définitives.
+        Vos identifiants et liens d'activation sont mis à disposition immédiatement après validation du paiement dans votre espace de suivi et par courrier électronique, avec assistance technique 7j/7.
       </p>
     `
   }
@@ -119,7 +116,7 @@ export function setupLegalModal() {
         <button type="button" class="legal-tab-btn ${key === "cgv" ? "active" : ""}" data-legal-tab="cgv">CGV</button>
         <button type="button" class="legal-tab-btn ${key === "mentions" ? "active" : ""}" data-legal-tab="mentions">Mentions Légales</button>
         <button type="button" class="legal-tab-btn ${key === "confidentialite" ? "active" : ""}" data-legal-tab="confidentialite">Confidentialité</button>
-        <button type="button" class="legal-tab-btn ${key === "remboursements" ? "active" : ""}" data-legal-tab="remboursements">Garantie 365j</button>
+        <button type="button" class="legal-tab-btn ${key === "garantie" ? "active" : ""}" data-legal-tab="garantie">Garantie 365j</button>
       </div>
 
       <div class="legal-modal-body">

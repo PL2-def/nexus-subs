@@ -148,11 +148,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         window.openOrderTracker?.();
         break;
 
-      case "open-admin":
-        closeMobileMenu();
-        admin.openModal();
-        break;
-
       case "open-legal":
         window.openLegalModal?.(actionEl.getAttribute("data-doc") || "cgv");
         break;

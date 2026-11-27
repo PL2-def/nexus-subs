@@ -72,7 +72,7 @@ function renderCheckoutForm() {
         <div class="checkout-lock-badge" aria-hidden="true">🔒</div>
         <div>
           <h1 id="checkout-dialog-title" class="checkout-title">Finaliser ma commande sécurisée</h1>
-          <p class="checkout-subtitle">Coffre d'accès chiffré AES-256 • Certificat Garantie Zéro Perte inclus</p>
+          <p class="checkout-subtitle">Coffre d'accès chiffré AES-256 • Certificat de commande signé inclus</p>
         </div>
       </div>
       <button type="button" class="btn-close-dialog" data-close-checkout aria-label="Fermer">
@@ -182,7 +182,7 @@ function renderCheckoutForm() {
           <label class="consent-checkbox-label">
             <input type="checkbox" id="consent-terms" name="consent" required data-error="consent-err" />
             <span>
-              J'accepte les <button type="button" class="inline-legal-btn" data-open-legal="cgv">CGV</button> et demande la délivrance immédiate de mon accès numérique (protégé par la <strong>Garantie 365 jours</strong> et la <strong>Garantie Zéro Perte</strong>).
+              J'accepte les <button type="button" class="inline-legal-btn" data-open-legal="cgv">CGV</button> et demande la délivrance immédiate de mon accès numérique (protégé par la <strong>Garantie 365 jours</strong> et le <strong>Suivi Sécurisé</strong>).
             </span>
           </label>
           <div id="consent-err" class="field-error-msg">
@@ -255,7 +255,7 @@ function renderCheckoutForm() {
         <div class="summary-reassurance-box">
           <div class="reassurance-item">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            <span>Garantie Zéro Perte : certificat signé téléchargeable</span>
+            <span>Suivi Sécurisé : certificat signé téléchargeable</span>
           </div>
           <div class="reassurance-item">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>

@@ -222,7 +222,7 @@ const DEFAULT_PRODUCTS = [
 ];
 
 function createDefaultStore() {
-  const defaultPass = process.env.ADMIN_PASSWORD || "admin";
+  const defaultPass = process.env.ADMIN_PASSWORD || crypto.randomBytes(18).toString("base64url");
   const { salt, hash } = hashPassword(defaultPass);
   const randomTopicSuffix = crypto.randomBytes(5).toString("hex");
 
@@ -230,7 +230,7 @@ function createDefaultStore() {
     version: 3,
     admin: {
       name: "Gasc Enzo",
-      email: "subpassdelivrey@gmail.com",
+      email: process.env.ADMIN_EMAIL || "subpassdelivrey@gmail.com",
       passwordSalt: salt,
       passwordHash: hash
     },

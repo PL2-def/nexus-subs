@@ -1,6 +1,6 @@
 /**
  * Centre d'Instructions Complet (Achat, Obtention du bien, Tutoriels d'activation)
- * + Système de Secours "Garantie Zéro Perte" (en cas de bug réseau, fermeture de page ou erreur d'e-mail)
+ * + Système d'Assistance Commande (en cas de bug réseau, fermeture de page ou erreur d'e-mail)
  * + File d'attente hors-ligne (Offline Retry Queue)
  */
 
@@ -64,7 +64,7 @@ export function downloadOrderRescueProof(order) {
   const lines = [
     "============================================================",
     "       CERTIFICAT OFFICIEL DE COMMANDE — NEXUS SUBS",
-    "            GARANTIE ZÉRO PERTE D'ARGENT 100%",
+    "         CERTIFICAT DE COMMANDE & SUIVI SÉCURISÉ",
     "============================================================",
     `Numéro de commande     : #${order.orderId}`,
     `Référence SEPA         : ${order.sepaRef || "N/A"}`,
@@ -104,7 +104,7 @@ export function downloadOrderRescueProof(order) {
 
 /**
  * Initialise les onglets accessibles du Guide d'Instructions (conformes Modern Web Guidance: tabs)
- * + la modale d'urgence "Secours Paiement / Garantie Zéro Perte"
+ * + la modale d'urgence "Assistance Commande / Suivi Prioritaire"
  */
 export function initGuideAndRescue() {
   window.addEventListener("online", () => {
@@ -164,7 +164,7 @@ export function initGuideAndRescue() {
     });
   });
 
-  // Modale de Secours Paiement ("Garantie Zéro Perte")
+  // Modale d'Assistance Commande ("Secours Paiement / Suivi Prioritaire")
   const rescueDialog = document.getElementById("rescue-dialog");
   window.openRescueModal = (prefillOrderRef = "") => {
     if (!rescueDialog) return;
@@ -183,8 +183,8 @@ function renderRescueModalContent(prefillOrderRef = "") {
       <div class="checkout-header-title">
         <div class="live-pulse-badge delivered" aria-hidden="true">🛡️</div>
         <div>
-          <h1 id="rescue-dialog-title" class="checkout-title">Secours Paiement — Garantie Zéro Perte</h1>
-          <p class="checkout-subtitle">Un bug, une page fermée ou une erreur d'adresse e-mail après votre paiement ? Votre argent est 100% protégé.</p>
+          <h1 id="rescue-dialog-title" class="checkout-title">Assistance Commande — Suivi Prioritaire</h1>
+          <p class="checkout-subtitle">Un bug, une page fermée ou une erreur d'adresse e-mail après votre commande ? Notre équipe retrouve votre dossier immédiatement.</p>
         </div>
       </div>
       <button type="button" class="btn-close-dialog" data-close-rescue aria-label="Fermer">
@@ -194,9 +194,9 @@ function renderRescueModalContent(prefillOrderRef = "") {
 
     <div class="order-lookup-body">
       <div class="rescue-guarantee-callout">
-        <strong>Comment fonctionne votre protection ?</strong>
+        <strong>Comment fonctionne l'assistance prioritaire ?</strong>
         <p>
-          Chaque transaction est inscrite dans notre journal de sauvegarde permanent. Remplissez ce formulaire en 20 secondes : notre administrateur reçoit immédiatement une <strong>alerte prioritaire urgente sur son téléphone</strong> et une fenêtre de discussion en direct s'ouvre pour vous remettre vos accès sans aucun risque de perte.
+          Chaque transaction est inscrite dans notre journal de sauvegarde permanent. Remplissez ce formulaire en 20 secondes : notre administrateur reçoit immédiatement une <strong>alerte prioritaire urgente sur son téléphone</strong> et une fenêtre de discussion en direct s'ouvre pour vous remettre vos accès rapidement.
         </p>
       </div>
 
