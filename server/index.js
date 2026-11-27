@@ -3,7 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { db, hashPassword, verifyPassword } from "./db.js";
+import { db, hashPassword, verifyPassword, dummyPasswordCheck } from "./db.js";
 import {
   getPrivacyClientHash,
   signOrderRescueProof,
@@ -12,12 +12,30 @@ import {
   createRateLimiter,
   checkAdminLoginAllowed,
   recordAdminLoginFailure,
-  clearAdminLoginFailures
+  clearAdminLoginFailures,
+  parseCookies,
+  getSessionCookieName,
+  setSessionCookie,
+  clearSessionCookie,
+  sendClearSiteDataHeader,
+  hashToken,
+  canonicalizeEmail,
+  getCanonicalEmailKey,
+  validatePasswordStrength,
+  summarizeUserAgent,
+  checkCustomerLoginAllowed,
+  recordCustomerLoginFailure,
+  clearCustomerLoginFailures
 } from "./security.js";
 import {
+  FLAG_DEFINITIONS,
+  isDisposableEmail,
+  ingestVisitorTelemetry,
+  computeComprehensiveFraudRisk,
   evaluateOrderFraud,
   evaluateFastDeclarationFraud,
-  computeDiscussionDiagnostics
+  computeDiscussionDiagnostics,
+  computeCustomerProfileAssessment
 } from "./fraud-and-triage.js";
 import {
   sendMobilePushNotification,
@@ -63,6 +81,21 @@ const chatLimiter = createRateLimiter({
   max: 30,
   message: "Envoi de messages trop rapide. Patientez quelques secondes."
 });
+const authRegisterLimiter = createRateLimiter({
+  windowMs: 15 * 60_000,
+  max: 8,
+  message: "Trop de créations de comptes depuis cette connexion. Patientez quelques minutes."
+});
+const authLoginLimiter = createRateLimiter({
+  windowMs: 10 * 60_000,
+  max: 20,
+  message: "Trop de tentatives de connexion. Patientez quelques minutes."
+});
+const telemetryLimiter = createRateLimiter({
+  windowMs: 60_000,
+  max: 60,
+  message: "Limite de télémétrie atteinte."
+});
 
 // ============================================================================
 // Real-Time Server-Sent Events (SSE) Hubs
@@ -100,7 +133,7 @@ function broadcastOrder(orderId, event, order) {
       sendSse(res, event, { order: sanitizeOrderForCustomer(order) });
     }
   }
-  broadcastAdmin("order_updated", { order });
+  broadcastAdmin("order_updated", { order: enrichOrderForAdmin(order) });
 }
 
 function broadcastDiscussion(threadId, event, thread) {
@@ -157,21 +190,178 @@ function getPublicPaymentConfig() {
 
 function sanitizeOrderForCustomer(order) {
   if (!order) return null;
-  const { accessToken, clientHash, riskScore, fraudReasons, ...safe } = order;
+  const { accessToken, clientHash, deviceFingerprint, visitorId, riskScore, fraudReasons, fraudAssessment, ...safe } = order;
   return safe;
 }
 
 function sanitizeThreadForCustomer(thread) {
   if (!thread) return null;
-  const { threadToken, clientHash, riskScore, fraudReasons, manualFlags, unreadByAdmin, ...safe } = thread;
+  const {
+    threadToken,
+    clientHash,
+    deviceFingerprint,
+    visitorId,
+    riskScore,
+    fraudReasons,
+    manualFlags,
+    adminNotes,
+    unreadByAdmin,
+    ...safe
+  } = thread;
   return safe;
+}
+
+function getDiagnosticContext() {
+  return {
+    allUsers: db.data.users || [],
+    allDiscussions: db.data.discussions || [],
+    rescueClaims: db.data.rescueClaims || [],
+    visitorProfiles: db.data.visitorProfiles || {},
+    security: db.data.security || {}
+  };
 }
 
 function enrichThreadForAdmin(thread) {
   return {
     ...thread,
-    diagnostics: computeDiscussionDiagnostics(thread, db.data.orders)
+    diagnostics: computeDiscussionDiagnostics(thread, db.data.orders, getDiagnosticContext())
   };
+}
+
+function enrichOrderForAdmin(order) {
+  const ctx = getDiagnosticContext();
+  const liveAssessment = computeComprehensiveFraudRisk({
+    email: order.email,
+    customerName: order.customerName,
+    userId: order.userId || null,
+    clientHash: order.clientHash || "",
+    deviceFingerprint: order.deviceFingerprint || "",
+    visitorId: order.visitorId || "",
+    orderTotal: Number(order.total || 0),
+    orderQuantity: (order.items || []).reduce((s, i) => s + (i.quantity || 1), 0),
+    existingOrders: db.data.orders,
+    ...ctx,
+    fastDeclarationSec: typeof order.fastDeclarationSec === "number" ? order.fastDeclarationSec : null
+  });
+  const effectiveScore = Math.max(Number(order.riskScore || 0), liveAssessment.score);
+  const mergedReasons = [...liveAssessment.reasons];
+  for (const r of order.fraudReasons || []) {
+    if (r && !mergedReasons.includes(r)) mergedReasons.push(r);
+  }
+  return {
+    ...order,
+    riskScore: effectiveScore,
+    fraudReasons: mergedReasons,
+    fraudAssessment: {
+      ...liveAssessment,
+      score: effectiveScore,
+      level: effectiveScore >= 70 ? "critical" : effectiveScore >= 45 ? "elevated" : effectiveScore >= 25 ? "moderate" : "low",
+      reasons: mergedReasons
+    }
+  };
+}
+
+function extractCustomerRawToken(req) {
+  const cookies = parseCookies(req);
+  const preferred = getSessionCookieName(req);
+  if (cookies[preferred]) return cookies[preferred];
+  if (cookies["__Host-nexus_sid"]) return cookies["__Host-nexus_sid"];
+  if (cookies["nexus_sid"]) return cookies["nexus_sid"];
+  const headerTok = String(req.headers["x-customer-token"] || "").trim();
+  if (headerTok) return headerTok;
+  return "";
+}
+
+function getAuthenticatedCustomer(req) {
+  const rawToken = extractCustomerRawToken(req);
+  if (!rawToken) return null;
+  return db.verifyUserSession(rawToken);
+}
+
+function requireCustomerAuth(req, res, next) {
+  const auth = getAuthenticatedCustomer(req);
+  if (!auth) {
+    return res.status(401).json({ error: "Veuillez vous connecter à votre compte pour effectuer cette action." });
+  }
+  req.user = auth.user;
+  req.userSession = auth.session;
+  next();
+}
+
+function requireCustomerCsrf(req, res, next) {
+  const sent = String(req.get("X-CSRF-Token") || "");
+  const expected = String(req.userSession?.csrfToken || "");
+  if (!sent || !expected || sent.length !== expected.length) {
+    return res.status(403).json({ error: "Jeton de sécurité CSRF invalide ou expiré. Rechargez la page." });
+  }
+  const ok = crypto.timingSafeEqual(Buffer.from(sent), Buffer.from(expected));
+  if (!ok) {
+    return res.status(403).json({ error: "Jeton de sécurité CSRF invalide." });
+  }
+  next();
+}
+
+function getCustomerOwnedOrders(user) {
+  const cleanEmail = canonicalizeEmail(user.email);
+  return db.data.orders
+    .filter((o) => o.userId === user.id || canonicalizeEmail(o.email) === cleanEmail)
+    .map((o) => ({
+      ...sanitizeOrderForCustomer(o),
+      accessToken: o.accessToken
+    }));
+}
+
+function getCustomerOwnedDiscussions(user) {
+  const cleanEmail = canonicalizeEmail(user.email);
+  return db.data.discussions
+    .filter((t) => t.userId === user.id || canonicalizeEmail(t.customerEmail) === cleanEmail)
+    .map((t) => ({
+      ...sanitizeThreadForCustomer(t),
+      threadToken: t.threadToken
+    }));
+}
+
+function sanitizeUserForClient(user) {
+  if (!user) return null;
+  const orders = getCustomerOwnedOrders(user);
+  const discussions = getCustomerOwnedDiscussions(user);
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    status: user.status || "active",
+    createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt || null,
+    ordersCount: orders.length,
+    discussionsCount: discussions.length,
+    securityLog: (user.securityLog || []).slice(0, 12)
+  };
+}
+
+function pushUserSecurityLog(user, { action, detail = "", userAgentSummary = "" }) {
+  user.securityLog = user.securityLog || [];
+  user.securityLog.unshift({
+    id: `ulog_${Date.now()}_${crypto.randomBytes(2).toString("hex")}`,
+    action,
+    detail,
+    device: userAgentSummary,
+    at: new Date().toISOString()
+  });
+  user.securityLog = user.securityLog.slice(0, 25);
+}
+
+function validateCustomerFullName(raw) {
+  const clean = String(raw || "")
+    .replace(/[\u0000-\u001F\u007F]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (clean.length < 2 || clean.length > 80) {
+    return { valid: false, error: "Veuillez indiquer votre nom (entre 2 et 80 caractères)." };
+  }
+  if (!/^[\p{L}\p{M}0-9'’\-\. ]+$/u.test(clean)) {
+    return { valid: false, error: "Le nom contient des caractères non autorisés." };
+  }
+  return { valid: true, value: clean };
 }
 
 /**
@@ -193,6 +383,9 @@ function syncOrderMessageToDiscussion(order, sender, text) {
       productId: order.items[0]?.id || null,
       productTitle: order.items.map((i) => i.title).join(", "),
       orderId: order.orderId,
+      userId: order.userId || null,
+      visitorId: order.visitorId || "",
+      deviceFingerprint: order.deviceFingerprint || "",
       customerName: order.customerName,
       customerEmail: order.email,
       clientHash: order.clientHash || "",
@@ -200,6 +393,7 @@ function syncOrderMessageToDiscussion(order, sender, text) {
       riskScore: order.riskScore || 0,
       fraudReasons: [...(order.fraudReasons || [])],
       manualFlags: {},
+      adminNotes: "",
       unreadByAdmin: sender === "customer" ? 1 : 0,
       unreadByCustomer: sender === "admin" ? 1 : 0,
       messages: [
@@ -398,10 +592,608 @@ app.get("/api/events/catalog", (req, res) => {
   req.on("close", () => catalogStreams.delete(res));
 });
 
+// ============================================================================
+// Suivi Comportemental Complet sur le Site (Télémétrie Anti-Fraude RGPD-Safe)
+// ============================================================================
+let lastTelemetrySaveAt = 0;
+
+app.post("/api/telemetry/events", telemetryLimiter, (req, res) => {
+  try {
+    const { visitorId = "", sessionId = "", deviceFingerprint = "", events = [], snapshot = null } = req.body || {};
+    const auth = getAuthenticatedCustomer(req);
+    const clientHash = getPrivacyClientHash(req);
+    const uaSummary = summarizeUserAgent(req.headers["user-agent"] || "");
+
+    const profile = ingestVisitorTelemetry(db, {
+      visitorId,
+      sessionId,
+      clientHash,
+      deviceFingerprint,
+      userId: auth?.user?.id || null,
+      email: auth?.user?.email || "",
+      events,
+      snapshot,
+      userAgentSummary: uaSummary
+    });
+
+    if (auth?.user && deviceFingerprint) {
+      auth.user.lastDeviceFingerprint = String(deviceFingerprint).slice(0, 64);
+      auth.user.lastClientHash = clientHash;
+      if (visitorId) auth.user.lastVisitorId = String(visitorId).slice(0, 64);
+    }
+
+    const hasHighSignal =
+      Boolean(profile?.webdriverDetected) ||
+      (Array.isArray(events) &&
+        events.some((e) =>
+          ["coupon_attempt", "order_lookup_attempt", "checkout_open", "checkout_abandon", "auth_login_fail"].includes(
+            e?.type
+          )
+        ));
+
+    if (hasHighSignal || Date.now() - lastTelemetrySaveAt > 20_000) {
+      lastTelemetrySaveAt = Date.now();
+      db.save();
+    }
+
+    res.json({ ok: true });
+  } catch {
+    res.status(200).json({ ok: false });
+  }
+});
+
+// ============================================================================
+// Comptes Clients Sécurisés (Inscription, Connexion, Sessions, Mot de passe)
+// ============================================================================
+app.get("/api/auth/me", (req, res) => {
+  const auth = getAuthenticatedCustomer(req);
+  if (!auth) {
+    return res.json({ authenticated: false, user: null });
+  }
+  res.json({
+    authenticated: true,
+    user: sanitizeUserForClient(auth.user),
+    csrfToken: auth.session.csrfToken,
+    sessions: db.getUserActiveSessions(auth.user.id, auth.session.id),
+    orders: getCustomerOwnedOrders(auth.user),
+    discussions: getCustomerOwnedDiscussions(auth.user)
+  });
+});
+
+app.post("/api/auth/register", authRegisterLimiter, async (req, res) => {
+  try {
+    const {
+      fullName = "",
+      email = "",
+      password = "",
+      honeypot = "",
+      formFillMs = null,
+      visitorId = "",
+      deviceFingerprint = "",
+      telemetrySnapshot = null
+    } = req.body || {};
+
+    const clientHash = getPrivacyClientHash(req);
+    const uaSummary = summarizeUserAgent(req.headers["user-agent"] || "");
+    const cleanEmail = canonicalizeEmail(email);
+
+    if (honeypot && String(honeypot).trim() !== "") {
+      db.recordSecurityEvent({ type: "register_honeypot", email: cleanEmail, clientHash });
+      db.save();
+      return res.status(403).json({ error: "Inscription bloquée par notre protection anti-robot." });
+    }
+
+    const nameCheck = validateCustomerFullName(fullName);
+    if (!nameCheck.valid) {
+      return res.status(400).json({ error: nameCheck.error });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail) || cleanEmail.length > 120) {
+      return res.status(400).json({ error: "Veuillez saisir une adresse e-mail valide." });
+    }
+    if (isDisposableEmail(cleanEmail)) {
+      ingestVisitorTelemetry(db, {
+        visitorId,
+        clientHash,
+        deviceFingerprint,
+        email: cleanEmail,
+        events: [{ type: "auth_register_attempt", label: "Tentative e-mail jetable refusée", ok: false }],
+        snapshot: telemetrySnapshot,
+        userAgentSummary: uaSummary
+      });
+      db.recordSecurityEvent({ type: "register_disposable_email", email: cleanEmail, clientHash });
+      db.save();
+      return res.status(400).json({
+        error: "Les adresses e-mail jetables ou temporaires ne sont pas acceptées afin de protéger vos abonnements et vos accès."
+      });
+    }
+
+    const passCheck = validatePasswordStrength(password, cleanEmail, nameCheck.value);
+    if (!passCheck.valid) {
+      return res.status(400).json({
+        error: passCheck.issues[0] || "Votre mot de passe ne respecte pas les exigences de sécurité.",
+        issues: passCheck.issues
+      });
+    }
+
+    // Contrôle anti-fraude & blacklist à l'inscription
+    const regFraud = computeComprehensiveFraudRisk({
+      email: cleanEmail,
+      customerName: nameCheck.value,
+      clientHash,
+      deviceFingerprint,
+      visitorId,
+      formFillMs: typeof formFillMs === "number" ? formFillMs : null,
+      honeypot,
+      existingOrders: db.data.orders,
+      ...getDiagnosticContext(),
+      inlineSnapshot: telemetrySnapshot
+    });
+
+    if (regFraud.blocked) {
+      db.recordSecurityEvent({
+        type: "register_blocked_fraud",
+        email: cleanEmail,
+        clientHash,
+        score: regFraud.score,
+        reasons: regFraud.reasons
+      });
+      db.addNotification({
+        type: "security",
+        title: `🚨 Création de compte bloquée (${cleanEmail})`,
+        message: `Score fraude ${regFraud.score}/100 — ${regFraud.reasons.slice(0, 2).join(" • ")}`
+      });
+      return res.status(403).json({
+        error: "Création de compte refusée par notre protection de sécurité. Contactez le support en direct si besoin."
+      });
+    }
+
+    const existing = db.data.users.find((u) => canonicalizeEmail(u.email) === cleanEmail);
+    if (existing) {
+      return res.status(409).json({
+        error: "Un compte existe déjà avec cette adresse e-mail. Cliquez sur « Se connecter »."
+      });
+    }
+
+    const { salt, hash } = hashPassword(password);
+    const nowIso = new Date().toISOString();
+    const user = {
+      id: `usr_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`,
+      name: nameCheck.value,
+      email: cleanEmail,
+      canonicalEmail: getCanonicalEmailKey(cleanEmail),
+      passwordSalt: salt,
+      passwordHash: hash,
+      status: "active",
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      lastLoginAt: nowIso,
+      lastClientHash: clientHash,
+      lastDeviceFingerprint: String(deviceFingerprint || "").slice(0, 64),
+      lastVisitorId: String(visitorId || "").slice(0, 64),
+      failedLoginCount: 0,
+      lockedUntil: 0,
+      trustedOverride: false,
+      manualFlags: {},
+      adminNotes: "",
+      passwordReset: null,
+      securityLog: [
+        {
+          id: `ulog_reg_${Date.now()}`,
+          action: "Création du compte",
+          detail: "Compte créé avec mot de passe sécurisé",
+          device: uaSummary,
+          at: nowIso
+        }
+      ]
+    };
+
+    db.data.users.unshift(user);
+
+    // Rattacher les anciennes commandes/discussions du même e-mail à ce compte
+    for (const o of db.data.orders) {
+      if (!o.userId && canonicalizeEmail(o.email) === cleanEmail) o.userId = user.id;
+    }
+    for (const t of db.data.discussions) {
+      if (!t.userId && canonicalizeEmail(t.customerEmail) === cleanEmail) t.userId = user.id;
+    }
+
+    ingestVisitorTelemetry(db, {
+      visitorId,
+      clientHash,
+      deviceFingerprint,
+      userId: user.id,
+      email: cleanEmail,
+      events: [{ type: "auth_register_attempt", label: "Compte client créé", ok: true }],
+      snapshot: telemetrySnapshot,
+      userAgentSummary: uaSummary
+    });
+
+    const { rawToken, session } = db.createUserSession(user, {
+      clientHash,
+      deviceFingerprint,
+      userAgent: req.headers["user-agent"] || ""
+    });
+
+    setSessionCookie(req, res, rawToken);
+
+    if (regFraud.score >= 35) {
+      const notif = db.addNotification({
+        type: "security",
+        title: `⚠️ Nouveau compte à surveiller : ${user.name} (Risque ${regFraud.score}/100)`,
+        message: `${user.email} — ${regFraud.reasons.slice(0, 2).join(" • ")}`
+      });
+      broadcastAdmin("notification", { notification: notif });
+    } else {
+      broadcastAdmin("customer_updated", { userId: user.id });
+    }
+
+    res.status(201).json({
+      authenticated: true,
+      user: sanitizeUserForClient(user),
+      csrfToken: session.csrfToken,
+      sessions: db.getUserActiveSessions(user.id, session.id),
+      orders: getCustomerOwnedOrders(user),
+      discussions: getCustomerOwnedDiscussions(user)
+    });
+  } catch (err) {
+    console.error("[Auth Register Error]", err);
+    res.status(500).json({ error: "Erreur interne lors de la création du compte. Veuillez réessayer." });
+  }
+});
+
+app.post("/api/auth/login", authLoginLimiter, async (req, res) => {
+  try {
+    const {
+      email = "",
+      password = "",
+      rememberMe = true,
+      visitorId = "",
+      deviceFingerprint = "",
+      telemetrySnapshot = null
+    } = req.body || {};
+
+    const clientHash = getPrivacyClientHash(req);
+    const uaSummary = summarizeUserAgent(req.headers["user-agent"] || "");
+    const cleanEmail = canonicalizeEmail(email);
+    const rawPass = typeof password === "string" ? password : "";
+
+    if (!cleanEmail || !rawPass) {
+      return res.status(400).json({ error: "Veuillez saisir votre adresse e-mail et votre mot de passe." });
+    }
+
+    const ipLock = checkCustomerLoginAllowed(`ip:${clientHash}`);
+    if (!ipLock.allowed) {
+      return res.status(429).json({ error: ipLock.message });
+    }
+    const emailLock = checkCustomerLoginAllowed(`email:${cleanEmail}`);
+    if (!emailLock.allowed) {
+      return res.status(429).json({ error: emailLock.message });
+    }
+
+    const user = db.data.users.find((u) => canonicalizeEmail(u.email) === cleanEmail);
+    if (!user) {
+      dummyPasswordCheck(rawPass);
+      await new Promise((r) => setTimeout(r, 280));
+      recordCustomerLoginFailure(`ip:${clientHash}`);
+      recordCustomerLoginFailure(`email:${cleanEmail}`);
+      ingestVisitorTelemetry(db, {
+        visitorId,
+        clientHash,
+        deviceFingerprint,
+        email: cleanEmail,
+        events: [{ type: "auth_login_fail", label: "Échec connexion (compte inconnu)", ok: false }],
+        snapshot: telemetrySnapshot,
+        userAgentSummary: uaSummary
+      });
+      db.save();
+      return res.status(401).json({ error: "Adresse e-mail ou mot de passe incorrect." });
+    }
+
+    if (user.lockedUntil && Date.now() < user.lockedUntil) {
+      const waitMin = Math.max(1, Math.ceil((user.lockedUntil - Date.now()) / 60_000));
+      return res.status(429).json({
+        error: `Ce compte est temporairement verrouillé par sécurité suite à plusieurs échecs. Réessayez dans ${waitMin} min.`
+      });
+    }
+
+    const passwordOk = rawPass.length <= 128 && verifyPassword(rawPass, user.passwordSalt, user.passwordHash);
+    if (!passwordOk) {
+      await new Promise((r) => setTimeout(r, 280));
+      const ipFail = recordCustomerLoginFailure(`ip:${clientHash}`);
+      recordCustomerLoginFailure(`email:${cleanEmail}`);
+      user.failedLoginCount = (user.failedLoginCount || 0) + 1;
+      if (user.failedLoginCount >= 10) {
+        user.lockedUntil = Date.now() + 30 * 60 * 1000;
+      } else if (user.failedLoginCount >= 5) {
+        user.lockedUntil = Date.now() + 5 * 60 * 1000;
+      }
+      pushUserSecurityLog(user, {
+        action: "Tentative de connexion échouée",
+        detail: "Mot de passe incorrect",
+        userAgentSummary: uaSummary
+      });
+      ingestVisitorTelemetry(db, {
+        visitorId,
+        clientHash,
+        deviceFingerprint,
+        userId: user.id,
+        email: cleanEmail,
+        events: [{ type: "auth_login_fail", label: "Mot de passe incorrect", ok: false }],
+        snapshot: telemetrySnapshot,
+        userAgentSummary: uaSummary
+      });
+      if (user.failedLoginCount >= 4 || ipFail.count >= 4) {
+        const notif = db.addNotification({
+          type: "security",
+          title: `🔐 Échecs répétés sur compte client (${cleanEmail})`,
+          message: `${user.failedLoginCount} échecs enregistrés sur ce compte (empreinte #${clientHash}).`
+        });
+        broadcastAdmin("notification", { notification: notif });
+      }
+      db.save();
+      return res.status(401).json({ error: "Adresse e-mail ou mot de passe incorrect." });
+    }
+
+    if (user.status === "suspended") {
+      return res.status(403).json({
+        error: "Votre compte est actuellement suspendu par la modération. Contactez notre assistance en direct."
+      });
+    }
+
+    clearCustomerLoginFailures(`ip:${clientHash}`);
+    clearCustomerLoginFailures(`email:${cleanEmail}`);
+
+    const nowIso = new Date().toISOString();
+    user.failedLoginCount = 0;
+    user.lockedUntil = 0;
+    user.lastLoginAt = nowIso;
+    user.lastClientHash = clientHash;
+    if (deviceFingerprint) user.lastDeviceFingerprint = String(deviceFingerprint).slice(0, 64);
+    if (visitorId) user.lastVisitorId = String(visitorId).slice(0, 64);
+
+    pushUserSecurityLog(user, {
+      action: "Connexion réussie",
+      detail: "Session sécurisée ouverte",
+      userAgentSummary: uaSummary
+    });
+
+    ingestVisitorTelemetry(db, {
+      visitorId,
+      clientHash,
+      deviceFingerprint,
+      userId: user.id,
+      email: cleanEmail,
+      events: [{ type: "auth_login_success", label: "Connexion réussie", ok: true }],
+      snapshot: telemetrySnapshot,
+      userAgentSummary: uaSummary
+    });
+
+    // Rattacher aussi d'éventuelles commandes passées en invité avec cet e-mail
+    for (const o of db.data.orders) {
+      if (!o.userId && canonicalizeEmail(o.email) === cleanEmail) o.userId = user.id;
+    }
+    for (const t of db.data.discussions) {
+      if (!t.userId && canonicalizeEmail(t.customerEmail) === cleanEmail) t.userId = user.id;
+    }
+
+    const { rawToken, session } = db.createUserSession(user, {
+      clientHash,
+      deviceFingerprint,
+      userAgent: req.headers["user-agent"] || "",
+      rememberDays: rememberMe ? 14 : 1
+    });
+
+    setSessionCookie(req, res, rawToken, (rememberMe ? 14 : 1) * 24 * 60 * 60);
+    broadcastAdmin("customer_updated", { userId: user.id });
+
+    res.json({
+      authenticated: true,
+      user: sanitizeUserForClient(user),
+      csrfToken: session.csrfToken,
+      sessions: db.getUserActiveSessions(user.id, session.id),
+      orders: getCustomerOwnedOrders(user),
+      discussions: getCustomerOwnedDiscussions(user)
+    });
+  } catch (err) {
+    console.error("[Auth Login Error]", err);
+    res.status(500).json({ error: "Erreur lors de la connexion. Veuillez réessayer." });
+  }
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  const rawToken = extractCustomerRawToken(req);
+  if (rawToken) db.revokeUserSessionByToken(rawToken);
+  clearSessionCookie(req, res);
+  sendClearSiteDataHeader(res);
+  res.json({ ok: true });
+});
+
+app.patch("/api/auth/profile", requireCustomerAuth, requireCustomerCsrf, (req, res) => {
+  const { fullName = "" } = req.body || {};
+  const check = validateCustomerFullName(fullName);
+  if (!check.valid) return res.status(400).json({ error: check.error });
+
+  req.user.name = check.value;
+  req.user.updatedAt = new Date().toISOString();
+  pushUserSecurityLog(req.user, {
+    action: "Profil mis à jour",
+    detail: `Nom modifié en ${check.value}`,
+    userAgentSummary: summarizeUserAgent(req.headers["user-agent"] || "")
+  });
+  db.save();
+
+  res.json({ user: sanitizeUserForClient(req.user) });
+});
+
+app.post("/api/auth/change-password", requireCustomerAuth, requireCustomerCsrf, async (req, res) => {
+  const { currentPassword = "", newPassword = "" } = req.body || {};
+  if (!verifyPassword(currentPassword, req.user.passwordSalt, req.user.passwordHash)) {
+    await new Promise((r) => setTimeout(r, 250));
+    return res.status(401).json({ error: "Votre mot de passe actuel est incorrect." });
+  }
+
+  const check = validatePasswordStrength(newPassword, req.user.email, req.user.name);
+  if (!check.valid) {
+    return res.status(400).json({ error: check.issues[0], issues: check.issues });
+  }
+
+  const { salt, hash } = hashPassword(newPassword);
+  req.user.passwordSalt = salt;
+  req.user.passwordHash = hash;
+  req.user.updatedAt = new Date().toISOString();
+  pushUserSecurityLog(req.user, {
+    action: "Mot de passe modifié",
+    detail: "Toutes les autres sessions ont été déconnectées par sécurité",
+    userAgentSummary: summarizeUserAgent(req.headers["user-agent"] || "")
+  });
+
+  // Rotation complète des sessions (invalide toutes les anciennes sessions)
+  db.revokeAllUserSessions(req.user.id);
+  const { rawToken, session } = db.createUserSession(req.user, {
+    clientHash: getPrivacyClientHash(req),
+    deviceFingerprint: req.user.lastDeviceFingerprint || "",
+    userAgent: req.headers["user-agent"] || ""
+  });
+  setSessionCookie(req, res, rawToken);
+
+  res.json({
+    ok: true,
+    csrfToken: session.csrfToken,
+    sessions: db.getUserActiveSessions(req.user.id, session.id),
+    user: sanitizeUserForClient(req.user)
+  });
+});
+
+app.post("/api/auth/sessions/revoke", requireCustomerAuth, requireCustomerCsrf, (req, res) => {
+  const { sessionId = "", revokeOthers = false } = req.body || {};
+  if (revokeOthers) {
+    db.revokeAllUserSessions(req.user.id, req.userSession.id);
+    pushUserSecurityLog(req.user, {
+      action: "Déconnexion des autres appareils",
+      detail: "Toutes les autres sessions actives ont été révoquées",
+      userAgentSummary: summarizeUserAgent(req.headers["user-agent"] || "")
+    });
+    db.save();
+  } else if (sessionId) {
+    if (sessionId === req.userSession.id) {
+      return res.status(400).json({ error: "Utilisez le bouton Déconnexion pour fermer votre session actuelle." });
+    }
+    db.revokeUserSessionById(req.user.id, String(sessionId));
+  }
+  res.json({
+    ok: true,
+    sessions: db.getUserActiveSessions(req.user.id, req.userSession.id),
+    user: sanitizeUserForClient(req.user)
+  });
+});
+
+app.post("/api/auth/forgot-password", authRegisterLimiter, async (req, res) => {
+  const cleanEmail = canonicalizeEmail(req.body?.email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail)) {
+    return res.status(400).json({ error: "Veuillez saisir une adresse e-mail valide." });
+  }
+
+  const user = db.data.users.find((u) => canonicalizeEmail(u.email) === cleanEmail);
+  const smtpEnabled = Boolean(db.data.settings?.notifications?.smtp?.enabled && db.data.settings?.notifications?.smtp?.pass);
+
+  if (user && smtpEnabled) {
+    const rawCode = `${crypto.randomInt(100000, 999999)}-${crypto.randomBytes(2).toString("hex").toUpperCase()}`;
+    user.passwordReset = {
+      codeHash: hashToken(rawCode),
+      expiresAt: Date.now() + 15 * 60 * 1000,
+      attempts: 0
+    };
+    pushUserSecurityLog(user, {
+      action: "Demande de réinitialisation mot de passe",
+      detail: "Code temporaire 15 min envoyé par e-mail",
+      userAgentSummary: summarizeUserAgent(req.headers["user-agent"] || "")
+    });
+    db.save();
+    await sendEmailIfConfigured({
+      to: user.email,
+      subject: "Code de réinitialisation sécurisé — NEXUS SUBS",
+      text: `Bonjour ${user.name},\n\nVoici votre code de réinitialisation valable 15 minutes : ${rawCode}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez ce message.`
+    });
+  } else {
+    // Délai constant anti-énumération
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  res.json({
+    ok: true,
+    smtpConfigured: smtpEnabled,
+    message: smtpEnabled
+      ? "Si un compte existe pour cette adresse, un code de réinitialisation valable 15 minutes vient d'être envoyé par e-mail."
+      : "L'envoi automatique d'e-mails n'est pas activé sur cette boutique. Contactez un conseiller via la Discussion en direct pour récupérer l'accès à votre compte."
+  });
+});
+
+app.post("/api/auth/reset-password", authLoginLimiter, async (req, res) => {
+  const { email = "", resetCode = "", newPassword = "" } = req.body || {};
+  const cleanEmail = canonicalizeEmail(email);
+  const cleanCode = String(resetCode || "").trim().toUpperCase();
+  const user = db.data.users.find((u) => canonicalizeEmail(u.email) === cleanEmail);
+
+  if (!user || !user.passwordReset || Date.now() > user.passwordReset.expiresAt) {
+    await new Promise((r) => setTimeout(r, 250));
+    return res.status(400).json({ error: "Code de réinitialisation invalide ou expiré." });
+  }
+  if ((user.passwordReset.attempts || 0) >= 5) {
+    user.passwordReset = null;
+    db.save();
+    return res.status(429).json({ error: "Trop d'essais. Demandez un nouveau code de réinitialisation." });
+  }
+
+  const candidateHash = hashToken(cleanCode);
+  const expectedHash = String(user.passwordReset.codeHash || "");
+  const matches =
+    candidateHash.length === expectedHash.length &&
+    crypto.timingSafeEqual(Buffer.from(candidateHash), Buffer.from(expectedHash));
+
+  if (!matches) {
+    user.passwordReset.attempts = (user.passwordReset.attempts || 0) + 1;
+    db.save();
+    return res.status(400).json({ error: "Code de réinitialisation incorrect." });
+  }
+
+  const check = validatePasswordStrength(newPassword, user.email, user.name);
+  if (!check.valid) {
+    return res.status(400).json({ error: check.issues[0], issues: check.issues });
+  }
+
+  const { salt, hash } = hashPassword(newPassword);
+  user.passwordSalt = salt;
+  user.passwordHash = hash;
+  user.passwordReset = null;
+  user.failedLoginCount = 0;
+  user.lockedUntil = 0;
+  user.updatedAt = new Date().toISOString();
+  pushUserSecurityLog(user, {
+    action: "Mot de passe réinitialisé",
+    detail: "Toutes les anciennes sessions ont été révoquées",
+    userAgentSummary: summarizeUserAgent(req.headers["user-agent"] || "")
+  });
+  db.revokeAllUserSessions(user.id);
+  db.save();
+
+  res.json({ ok: true, message: "Mot de passe mis à jour avec succès ! Vous pouvez maintenant vous connecter." });
+});
+
 app.post("/api/coupons/validate", couponLimiter, (req, res) => {
-  const { code, subtotal = 0 } = req.body || {};
+  const { code, subtotal = 0, visitorId = "", deviceFingerprint = "" } = req.body || {};
   const result = validateCouponInternal(code, Number(subtotal) || 0);
+  const auth = getAuthenticatedCustomer(req);
+  ingestVisitorTelemetry(db, {
+    visitorId,
+    clientHash: getPrivacyClientHash(req),
+    deviceFingerprint,
+    userId: auth?.user?.id || null,
+    email: auth?.user?.email || "",
+    events: [{ type: "coupon_attempt", label: `Test code promo : ${String(code || "").slice(0, 24)}`, ok: result.valid }],
+    userAgentSummary: summarizeUserAgent(req.headers["user-agent"] || "")
+  });
   if (!result.valid) {
+    db.save();
     return res.status(400).json({ valid: false, message: result.message });
   }
   res.json({
@@ -428,14 +1220,18 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
       notes = "",
       paymentMethod,
       honeypot = "",
-      formFillMs = null
+      formFillMs = null,
+      visitorId = "",
+      deviceFingerprint = "",
+      telemetrySnapshot = null
     } = req.body || {};
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "Votre panier est vide." });
     }
-    const cleanName = String(customerName || "").trim();
-    const cleanEmail = String(email || "").trim().toLowerCase();
+    const auth = getAuthenticatedCustomer(req);
+    const cleanName = String(customerName || auth?.user?.name || "").trim();
+    const cleanEmail = canonicalizeEmail(email || auth?.user?.email || "");
     if (!cleanName) {
       return res.status(400).json({ error: "Veuillez renseigner votre nom." });
     }
@@ -447,6 +1243,19 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
     }
 
     const clientHash = getPrivacyClientHash(req);
+    const uaSummary = summarizeUserAgent(req.headers["user-agent"] || "");
+
+    ingestVisitorTelemetry(db, {
+      visitorId,
+      clientHash,
+      deviceFingerprint,
+      userId: auth?.user?.id || null,
+      email: cleanEmail,
+      events: [{ type: "checkout_submit", label: `Validation commande (${paymentMethod.toUpperCase()})`, ok: true }],
+      snapshot: telemetrySnapshot,
+      userAgentSummary: uaSummary
+    });
+
     const resolvedItems = [];
     for (const rawItem of items) {
       const product = db.data.products.find((p) => p.id === rawItem.id && p.active !== false);
@@ -478,25 +1287,35 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
     const subtotal = Math.round(resolvedItems.reduce((acc, i) => acc + i.lineTotal, 0) * 100) / 100;
     const totalQuantity = resolvedItems.reduce((acc, i) => acc + i.quantity, 0);
 
-    // Contrôle Anti-Fraude en temps réel
+    // Contrôle Anti-Fraude Multi-Dimensionnel en temps réel (6 dimensions + suivi site complet)
     const fraudCheck = evaluateOrderFraud({
       email: cleanEmail,
       customerName: cleanName,
       total: subtotal,
       totalQuantity,
       clientHash,
+      deviceFingerprint,
+      visitorId,
+      userId: auth?.user?.id || null,
       formFillMs: typeof formFillMs === "number" ? formFillMs : null,
       honeypot,
       existingOrders: db.data.orders,
-      blockedEmails: db.data.security?.blockedEmails || [],
-      blockedHashes: db.data.security?.blockedHashes || []
+      ...getDiagnosticContext(),
+      inlineSnapshot: telemetrySnapshot
     });
 
     if (fraudCheck.blocked) {
+      db.recordSecurityEvent({
+        type: "order_blocked_fraud",
+        email: cleanEmail,
+        clientHash,
+        score: fraudCheck.score,
+        reasons: fraudCheck.reasons
+      });
       db.addNotification({
         type: "security",
-        title: `🚨 Tentative de commande bloquée (${cleanEmail})`,
-        message: `Raisons : ${fraudCheck.reasons.join(" • ")}`
+        title: `🚨 Tentative de commande bloquée (${cleanEmail} • Score ${fraudCheck.score}/100)`,
+        message: `Raisons : ${fraudCheck.reasons.slice(0, 3).join(" • ")}`
       });
       return res.status(403).json({
         error: "Votre commande n'a pas pu être validée par notre filtre de sécurité automatique. Contactez notre assistance en direct si vous pensez qu'il s'agit d'une erreur."
@@ -531,9 +1350,13 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
       orderId,
       sepaRef,
       accessToken,
+      userId: auth?.user?.id || null,
+      visitorId: String(visitorId || "").slice(0, 64),
+      deviceFingerprint: String(deviceFingerprint || "").slice(0, 64),
       clientHash,
       riskScore: fraudCheck.score,
       fraudReasons: fraudCheck.reasons,
+      fraudAssessment: fraudCheck,
       createdAt,
       updatedAt: createdAt,
       customerName: cleanName,
@@ -583,6 +1406,7 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
     appendRescueLedger("order_created", {
       orderId: order.orderId,
       sepaRef: order.sepaRef,
+      userId: order.userId,
       email: order.email,
       customerName: order.customerName,
       total: order.total,
@@ -607,14 +1431,19 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
     }
 
     const itemsSummary = resolvedItems.map((i) => `${i.quantity}x ${i.title}`).join(", ");
-    const fraudTag = fraudCheck.score >= 40 ? ` ⚠️ [Risque Fraude: ${fraudCheck.score}/100]` : "";
+    const fraudTag =
+      fraudCheck.score >= 70
+        ? ` 🚨 [FRAUDE CRITIQUE: ${fraudCheck.score}/100]`
+        : fraudCheck.score >= 45
+        ? ` ⚠️ [Risque Fraude: ${fraudCheck.score}/100]`
+        : "";
     const notif = db.addNotification({
       type: "order",
       title: `Nouvelle commande #${orderId} (${total} €)${fraudTag}`,
       message: `${cleanName} (${cleanEmail}) — ${paymentMethod.toUpperCase()} : ${itemsSummary}.`,
       orderId
     });
-    broadcastAdmin("order_created", { order, notification: notif });
+    broadcastAdmin("order_created", { order: enrichOrderForAdmin(order), notification: notif });
 
     res.status(201).json({
       order: sanitizeOrderForCustomer(order),
@@ -631,8 +1460,14 @@ app.post("/api/orders/:orderId/confirm-gateway", async (req, res) => {
   try {
     const { orderId } = req.params;
     const { token, gateway, sessionId, paypalOrderId, sandboxConfirm } = req.body || {};
+    const auth = getAuthenticatedCustomer(req);
     const order = db.data.orders.find((o) => o.orderId === orderId);
-    if (!order || order.accessToken !== token) {
+    const isOwner = Boolean(
+      order &&
+        ((token && order.accessToken === token) ||
+          (auth?.user && (order.userId === auth.user.id || canonicalizeEmail(order.email) === canonicalizeEmail(auth.user.email))))
+    );
+    if (!order || !isOwner) {
       return res.status(404).json({ error: "Commande introuvable ou jeton invalide." });
     }
 
@@ -693,13 +1528,20 @@ app.post("/api/orders/:orderId/declare-payment", async (req, res) => {
   try {
     const { orderId } = req.params;
     const { token, senderHint = "" } = req.body || {};
+    const auth = getAuthenticatedCustomer(req);
     const order = db.data.orders.find((o) => o.orderId === orderId);
-    if (!order || order.accessToken !== token) {
+    const isOwner = Boolean(
+      order &&
+        ((token && order.accessToken === token) ||
+          (auth?.user && (order.userId === auth.user.id || canonicalizeEmail(order.email) === canonicalizeEmail(auth.user.email))))
+    );
+    if (!order || !isOwner) {
       return res.status(404).json({ error: "Commande introuvable." });
     }
 
     if (order.paymentStatus !== "paid") {
       const fastCheck = evaluateFastDeclarationFraud(order);
+      order.fastDeclarationSec = fastCheck.elapsedSec;
       if (fastCheck.suspicious) {
         order.riskScore = Math.min(100, (order.riskScore || 0) + fastCheck.addedScore);
         order.fraudReasons = order.fraudReasons || [];
@@ -762,22 +1604,34 @@ app.post("/api/orders/:orderId/declare-payment", async (req, res) => {
 });
 
 app.post("/api/orders/lookup", lookupLimiter, (req, res) => {
-  const { orderId, email } = req.body || {};
+  const { orderId, email, visitorId = "", deviceFingerprint = "" } = req.body || {};
   const rawId = String(orderId || "")
     .trim()
     .toUpperCase()
     .replace(/^#/, "")
     .replace(/^NEXUS-/, "NX-");
   const normalizedNum = rawId.replace(/^NX-/, "");
-  const cleanEmail = String(email || "").trim().toLowerCase();
+  const cleanEmail = canonicalizeEmail(email);
 
   const order = db.data.orders.find(
     (o) =>
-      (o.orderId.toUpperCase() === rawId || o.orderId.endsWith(normalizedNum)) &&
-      o.email.toLowerCase() === cleanEmail
+      (o.orderId.toUpperCase() === rawId || (normalizedNum.length >= 5 && o.orderId.endsWith(normalizedNum))) &&
+      canonicalizeEmail(o.email) === cleanEmail
   );
 
+  const auth = getAuthenticatedCustomer(req);
+  ingestVisitorTelemetry(db, {
+    visitorId,
+    clientHash: getPrivacyClientHash(req),
+    deviceFingerprint,
+    userId: auth?.user?.id || null,
+    email: cleanEmail || auth?.user?.email || "",
+    events: [{ type: "order_lookup_attempt", label: `Recherche commande ${rawId || "?"}`, ok: Boolean(order) }],
+    userAgentSummary: summarizeUserAgent(req.headers["user-agent"] || "")
+  });
+
   if (!order) {
+    db.save();
     return res.status(404).json({
       error: "Aucune commande trouvée avec ce numéro et cet e-mail. Si vous avez fait une erreur d'adresse e-mail en commandant, utilisez le bouton « Secours Paiement / Bug » !"
     });
@@ -793,22 +1647,34 @@ app.get("/api/orders/:orderId", (req, res) => {
   const { orderId } = req.params;
   const token = String(req.query.token || "");
   const isAdmin = db.verifyAdminSession(extractAdminToken(req));
+  const auth = getAuthenticatedCustomer(req);
   const order = db.data.orders.find((o) => o.orderId === orderId);
+  const isOwner = Boolean(
+    order &&
+      ((token && order.accessToken === token) ||
+        (auth?.user && (order.userId === auth.user.id || canonicalizeEmail(order.email) === canonicalizeEmail(auth.user.email))))
+  );
 
-  if (!order || (!isAdmin && order.accessToken !== token)) {
+  if (!order || (!isAdmin && !isOwner)) {
     return res.status(404).json({ error: "Commande introuvable." });
   }
 
-  res.json({ order: isAdmin ? order : sanitizeOrderForCustomer(order) });
+  res.json({ order: isAdmin ? enrichOrderForAdmin(order) : sanitizeOrderForCustomer(order) });
 });
 
 app.get("/api/events/order/:orderId", (req, res) => {
   const { orderId } = req.params;
   const token = String(req.query.token || "");
   const isAdmin = db.verifyAdminSession(extractAdminToken(req));
+  const auth = getAuthenticatedCustomer(req);
   const order = db.data.orders.find((o) => o.orderId === orderId);
+  const isOwner = Boolean(
+    order &&
+      ((token && order.accessToken === token) ||
+        (auth?.user && (order.userId === auth.user.id || canonicalizeEmail(order.email) === canonicalizeEmail(auth.user.email))))
+  );
 
-  if (!order || (!isAdmin && order.accessToken !== token)) {
+  if (!order || (!isAdmin && !isOwner)) {
     return res.status(403).end();
   }
 
@@ -835,9 +1701,15 @@ app.post("/api/orders/:orderId/messages", chatLimiter, async (req, res) => {
   const { orderId } = req.params;
   const { token, text } = req.body || {};
   const isAdmin = db.verifyAdminSession(extractAdminToken(req));
+  const auth = getAuthenticatedCustomer(req);
   const order = db.data.orders.find((o) => o.orderId === orderId);
+  const isOwner = Boolean(
+    order &&
+      ((token && order.accessToken === token) ||
+        (auth?.user && (order.userId === auth.user.id || canonicalizeEmail(order.email) === canonicalizeEmail(auth.user.email))))
+  );
 
-  if (!order || (!isAdmin && order.accessToken !== token)) {
+  if (!order || (!isAdmin && !isOwner)) {
     return res.status(403).json({ error: "Non autorisé." });
   }
 
@@ -897,7 +1769,10 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
       productId = "",
       orderId = "",
       initialMessage = "",
-      honeypot = ""
+      honeypot = "",
+      visitorId = "",
+      deviceFingerprint = "",
+      telemetrySnapshot = null
     } = req.body || {};
 
     if (honeypot) return res.status(400).json({ error: "Requête refusée." });
@@ -907,14 +1782,29 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
       return res.status(400).json({ error: "Veuillez écrire votre question ou message." });
     }
 
+    const auth = getAuthenticatedCustomer(req);
     const clientHash = getPrivacyClientHash(req);
-    const cleanEmail = String(customerEmail || "").trim().toLowerCase();
+    const cleanEmail = canonicalizeEmail(customerEmail || auth?.user?.email || "");
+    const resolvedName = String(customerName || auth?.user?.name || "").trim() || "Visiteur";
+
     if (
       (cleanEmail && db.data.security?.blockedEmails?.includes(cleanEmail)) ||
-      db.data.security?.blockedHashes?.includes(clientHash)
+      db.data.security?.blockedHashes?.includes(clientHash) ||
+      (deviceFingerprint && db.data.security?.blockedFingerprints?.includes(deviceFingerprint))
     ) {
       return res.status(403).json({ error: "Accès restreint par la modération." });
     }
+
+    ingestVisitorTelemetry(db, {
+      visitorId,
+      clientHash,
+      deviceFingerprint,
+      userId: auth?.user?.id || null,
+      email: cleanEmail,
+      events: [{ type: "message_sent", label: `Nouvelle discussion (${topicType})`, ok: true }],
+      snapshot: telemetrySnapshot,
+      userAgentSummary: summarizeUserAgent(req.headers["user-agent"] || "")
+    });
 
     const prod = productId ? db.data.products.find((p) => p.id === productId) : null;
     const topicLabel =
@@ -947,13 +1837,17 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
         productId: prod ? prod.id : null,
         productTitle: prod ? prod.title : null,
         orderId: orderId ? String(orderId).trim() : null,
-        customerName: String(customerName || "").trim() || "Visiteur",
+        userId: auth?.user?.id || null,
+        visitorId: String(visitorId || "").slice(0, 64),
+        deviceFingerprint: String(deviceFingerprint || "").slice(0, 64),
+        customerName: resolvedName,
         customerEmail: cleanEmail,
         clientHash,
         status: "open",
         riskScore: 0,
         fraudReasons: [],
         manualFlags: {},
+        adminNotes: "",
         unreadByAdmin: 1,
         unreadByCustomer: 0,
         messages: [
@@ -975,8 +1869,11 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
       db.data.discussions.unshift(thread);
       db.data.discussions = db.data.discussions.slice(0, 300);
     } else {
-      if (customerName && String(customerName).trim()) thread.customerName = String(customerName).trim();
+      if (resolvedName && resolvedName !== "Visiteur") thread.customerName = resolvedName;
       if (cleanEmail) thread.customerEmail = cleanEmail;
+      if (auth?.user?.id) thread.userId = auth.user.id;
+      if (visitorId) thread.visitorId = String(visitorId).slice(0, 64);
+      if (deviceFingerprint) thread.deviceFingerprint = String(deviceFingerprint).slice(0, 64);
       thread.topicType = prod ? "product" : topicType;
       thread.topicLabel = topicLabel;
       thread.productId = prod ? prod.id : thread.productId;
@@ -995,11 +1892,17 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
 
     db.save();
 
-    const diag = computeDiscussionDiagnostics(thread, db.data.orders);
-    const alertPrefix = diag.isSuspectedFraud
-      ? "🚨 [SUSPECT FRAUDE]"
+    const diag = computeDiscussionDiagnostics(thread, db.data.orders, getDiagnosticContext());
+    const alertPrefix = diag.flagIds.includes("fraud_critical")
+      ? "🚨 [FRAUDE CRITIQUE]"
+      : diag.isSuspectedFraud
+      ? "⚠️ [RISQUE FRAUDE]"
+      : diag.isFurious
+      ? "🤬 [TRÈS EN COLÈRE]"
       : diag.isAnnoyed
       ? "😤 [CLIENT AGACÉ]"
+      : diag.isAnxious
+      ? "😟 [INQUIET]"
       : diag.needsFastHelp
       ? "⚡ [AIDE RAPIDE]"
       : "💬";
@@ -1019,8 +1922,8 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
     await sendMobilePushNotification({
       title: `${alertPrefix} ${thread.customerName} (${topicLabel})`,
       message: cleanMsg.slice(0, 300),
-      priority: diag.needsFastHelp || diag.isAnnoyed ? "urgent" : "high",
-      tags: diag.isAnnoyed ? "rotating_light,speech_balloon" : "speech_balloon,sparkles",
+      priority: diag.needsFastHelp || diag.isAnnoyed || diag.isFurious ? "urgent" : "high",
+      tags: diag.isFurious || diag.isAnnoyed ? "rotating_light,speech_balloon" : "speech_balloon,sparkles",
       clickUrl: `${originUrl}/?adminThread=${encodeURIComponent(thread.threadId)}#admin`
     });
 
@@ -1043,22 +1946,39 @@ app.post("/api/rescue-claim", orderLimiter, async (req, res) => {
       paymentMethod = "",
       amountPaid = "",
       paymentProof = "",
-      problemDetails = ""
+      problemDetails = "",
+      visitorId = "",
+      deviceFingerprint = "",
+      telemetrySnapshot = null
     } = req.body || {};
 
-    const cleanName = String(customerName || "").trim() || "Client Secours";
-    const cleanEmail = String(email || "").trim().toLowerCase();
+    const auth = getAuthenticatedCustomer(req);
+    const cleanName = String(customerName || auth?.user?.name || "").trim() || "Client Secours";
+    const cleanEmail = canonicalizeEmail(email || auth?.user?.email || "");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail) || !String(paymentProof || problemDetails).trim()) {
       return res.status(400).json({
         error: "Veuillez indiquer une adresse e-mail valide ainsi qu'un détail ou justificatif de votre règlement."
       });
     }
 
+    const clientHash = getPrivacyClientHash(req);
+    ingestVisitorTelemetry(db, {
+      visitorId,
+      clientHash,
+      deviceFingerprint,
+      userId: auth?.user?.id || null,
+      email: cleanEmail,
+      events: [{ type: "rescue_submit", label: `Ticket Secours (${amountPaid || "?"})`, ok: true }],
+      snapshot: telemetrySnapshot,
+      userAgentSummary: summarizeUserAgent(req.headers["user-agent"] || "")
+    });
+
     const nowIso = new Date().toISOString();
     const rescueId = `SOS-${Math.floor(100000 + Math.random() * 900000)}`;
     const claim = {
       rescueId,
       createdAt: nowIso,
+      userId: auth?.user?.id || null,
       customerName: cleanName,
       email: cleanEmail,
       orderRef: String(orderRef || "").trim(),
@@ -1073,7 +1993,6 @@ app.post("/api/rescue-claim", orderLimiter, async (req, res) => {
     db.data.rescueClaims.unshift(claim);
     db.save();
 
-    // Créer automatiquement une discussion prioritaire pour que le client parle en direct avec le vendeur
     const summaryMsg = [
       `🛡️ TICKET DE SECOURS PAIEMENT (${rescueId})`,
       `• Montant réglé : ${claim.amountPaid || "Non précisé"} (${claim.paymentMethod || "Non précisé"})`,
@@ -1094,13 +2013,17 @@ app.post("/api/rescue-claim", orderLimiter, async (req, res) => {
       productId: null,
       productTitle: null,
       orderId: claim.orderRef || null,
+      userId: auth?.user?.id || null,
+      visitorId: String(visitorId || "").slice(0, 64),
+      deviceFingerprint: String(deviceFingerprint || "").slice(0, 64),
       customerName: cleanName,
       customerEmail: cleanEmail,
-      clientHash: getPrivacyClientHash(req),
+      clientHash,
       status: "open",
       riskScore: 0,
       fraudReasons: [],
-      manualFlags: { fastHelp: true },
+      manualFlags: { fast_help: true, rescue_sos: true },
+      adminNotes: "",
       unreadByAdmin: 1,
       unreadByCustomer: 0,
       messages: [
@@ -1122,7 +2045,7 @@ app.post("/api/rescue-claim", orderLimiter, async (req, res) => {
     db.data.discussions.unshift(thread);
     db.save();
 
-    const diag = computeDiscussionDiagnostics(thread, db.data.orders);
+    const diag = computeDiscussionDiagnostics(thread, db.data.orders, getDiagnosticContext());
     const notif = db.addNotification({
       type: "rescue",
       title: `🚨 URGENCE SECOURS PAIEMENT #${rescueId} — ${cleanName}`,
@@ -1157,9 +2080,17 @@ app.get("/api/discussions/:threadId", (req, res) => {
   const { threadId } = req.params;
   const token = String(req.query.token || "");
   const isAdmin = db.verifyAdminSession(extractAdminToken(req));
+  const auth = getAuthenticatedCustomer(req);
   const thread = db.data.discussions.find((t) => t.threadId === threadId);
+  const isOwner = Boolean(
+    thread &&
+      ((token && thread.threadToken === token) ||
+        (auth?.user &&
+          (thread.userId === auth.user.id ||
+            (thread.customerEmail && canonicalizeEmail(thread.customerEmail) === canonicalizeEmail(auth.user.email)))))
+  );
 
-  if (!thread || (!isAdmin && thread.threadToken !== token)) {
+  if (!thread || (!isAdmin && !isOwner)) {
     return res.status(404).json({ error: "Discussion introuvable." });
   }
 
@@ -1176,14 +2107,22 @@ app.get("/api/discussions/:threadId", (req, res) => {
 app.patch("/api/discussions/:threadId/context", (req, res) => {
   const { threadId } = req.params;
   const { token, topicType, productId, customerName, customerEmail } = req.body || {};
-  const thread = db.data.discussions.find((t) => t.threadId === threadId && t.threadToken === token);
-  if (!thread) return res.status(404).json({ error: "Discussion introuvable." });
+  const auth = getAuthenticatedCustomer(req);
+  const thread = db.data.discussions.find((t) => t.threadId === threadId);
+  const isOwner = Boolean(
+    thread &&
+      ((token && thread.threadToken === token) ||
+        (auth?.user &&
+          (thread.userId === auth.user.id ||
+            (thread.customerEmail && canonicalizeEmail(thread.customerEmail) === canonicalizeEmail(auth.user.email)))))
+  );
+  if (!thread || !isOwner) return res.status(404).json({ error: "Discussion introuvable." });
 
   if (customerName !== undefined && String(customerName).trim()) {
     thread.customerName = String(customerName).trim();
   }
   if (customerEmail !== undefined && String(customerEmail).trim()) {
-    thread.customerEmail = String(customerEmail).trim().toLowerCase();
+    thread.customerEmail = canonicalizeEmail(customerEmail);
   }
   if (topicType) {
     const prod = productId ? db.data.products.find((p) => p.id === productId) : null;
@@ -1206,9 +2145,17 @@ app.get("/api/events/discussion/:threadId", (req, res) => {
   const { threadId } = req.params;
   const token = String(req.query.token || "");
   const isAdmin = db.verifyAdminSession(extractAdminToken(req));
+  const auth = getAuthenticatedCustomer(req);
   const thread = db.data.discussions.find((t) => t.threadId === threadId);
+  const isOwner = Boolean(
+    thread &&
+      ((token && thread.threadToken === token) ||
+        (auth?.user &&
+          (thread.userId === auth.user.id ||
+            (thread.customerEmail && canonicalizeEmail(thread.customerEmail) === canonicalizeEmail(auth.user.email)))))
+  );
 
-  if (!thread || (!isAdmin && thread.threadToken !== token)) {
+  if (!thread || (!isAdmin && !isOwner)) {
     return res.status(403).end();
   }
 
@@ -1235,9 +2182,17 @@ app.post("/api/discussions/:threadId/messages", chatLimiter, async (req, res) =>
   const { threadId } = req.params;
   const { token, text, attachedProductId = null, attachedCouponCode = null } = req.body || {};
   const isAdmin = db.verifyAdminSession(extractAdminToken(req));
+  const auth = getAuthenticatedCustomer(req);
   const thread = db.data.discussions.find((t) => t.threadId === threadId);
+  const isOwner = Boolean(
+    thread &&
+      ((token && thread.threadToken === token) ||
+        (auth?.user &&
+          (thread.userId === auth.user.id ||
+            (thread.customerEmail && canonicalizeEmail(thread.customerEmail) === canonicalizeEmail(auth.user.email)))))
+  );
 
-  if (!thread || (!isAdmin && thread.threadToken !== token)) {
+  if (!thread || (!isAdmin && !isOwner)) {
     return res.status(403).json({ error: "Non autorisé." });
   }
 
@@ -1305,11 +2260,17 @@ app.post("/api/discussions/:threadId/messages", chatLimiter, async (req, res) =>
   db.save();
 
   if (!isAdmin) {
-    const diag = computeDiscussionDiagnostics(thread, db.data.orders);
-    const prefix = diag.isSuspectedFraud
-      ? "🚨 [SUSPECT FRAUDE]"
+    const diag = computeDiscussionDiagnostics(thread, db.data.orders, getDiagnosticContext());
+    const prefix = diag.flagIds.includes("fraud_critical")
+      ? "🚨 [FRAUDE CRITIQUE]"
+      : diag.isSuspectedFraud
+      ? "⚠️ [RISQUE FRAUDE]"
+      : diag.isFurious
+      ? "🤬 [TRÈS EN COLÈRE]"
       : diag.isAnnoyed
       ? "😤 [CLIENT AGACÉ]"
+      : diag.isAnxious
+      ? "😟 [INQUIET]"
       : diag.needsFastHelp
       ? "⚡ [AIDE RAPIDE]"
       : "💬";
@@ -1326,8 +2287,8 @@ app.post("/api/discussions/:threadId/messages", chatLimiter, async (req, res) =>
     await sendMobilePushNotification({
       title: `${prefix} ${thread.customerName}`,
       message: `[${thread.topicLabel}]\n${cleanText.slice(0, 260)}`,
-      priority: diag.needsFastHelp || diag.isAnnoyed ? "urgent" : "high",
-      tags: diag.isAnnoyed ? "anger,speech_balloon" : "speech_balloon",
+      priority: diag.needsFastHelp || diag.isAnnoyed || diag.isFurious ? "urgent" : "high",
+      tags: diag.isFurious || diag.isAnnoyed ? "anger,speech_balloon" : "speech_balloon",
       clickUrl: `${originUrl}/?adminThread=${encodeURIComponent(thread.threadId)}#admin`
     });
   }
@@ -1340,14 +2301,27 @@ app.post("/api/discussions/:threadId/messages", chatLimiter, async (req, res) =>
 });
 
 app.post("/api/support", chatLimiter, async (req, res) => {
-  const { name, email, message } = req.body || {};
-  const cleanName = String(name || "").trim();
-  const cleanEmail = String(email || "").trim().toLowerCase();
+  const { name, email, message, visitorId = "", deviceFingerprint = "", telemetrySnapshot = null } = req.body || {};
+  const auth = getAuthenticatedCustomer(req);
+  const cleanName = String(name || auth?.user?.name || "").trim();
+  const cleanEmail = canonicalizeEmail(email || auth?.user?.email || "");
   const cleanMsg = String(message || "").trim();
 
   if (!cleanName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail) || !cleanMsg) {
     return res.status(400).json({ error: "Veuillez remplir tous les champs correctement." });
   }
+
+  const clientHash = getPrivacyClientHash(req);
+  ingestVisitorTelemetry(db, {
+    visitorId,
+    clientHash,
+    deviceFingerprint,
+    userId: auth?.user?.id || null,
+    email: cleanEmail,
+    events: [{ type: "message_sent", label: "Formulaire Support 7j/7", ok: true }],
+    snapshot: telemetrySnapshot,
+    userAgentSummary: summarizeUserAgent(req.headers["user-agent"] || "")
+  });
 
   const nowIso = new Date().toISOString();
   const item = {
@@ -1370,13 +2344,17 @@ app.post("/api/support", chatLimiter, async (req, res) => {
     productId: null,
     productTitle: null,
     orderId: null,
+    userId: auth?.user?.id || null,
+    visitorId: String(visitorId || "").slice(0, 64),
+    deviceFingerprint: String(deviceFingerprint || "").slice(0, 64),
     customerName: cleanName,
     customerEmail: cleanEmail,
-    clientHash: getPrivacyClientHash(req),
+    clientHash,
     status: "open",
     riskScore: 0,
     fraudReasons: [],
     manualFlags: {},
+    adminNotes: "",
     unreadByAdmin: 1,
     unreadByCustomer: 0,
     messages: [
@@ -1398,7 +2376,7 @@ app.post("/api/support", chatLimiter, async (req, res) => {
   });
   db.save();
 
-  broadcastAdmin("support_message", { supportMessage: item, notification: notif });
+  broadcastAdmin("support_message", { supportMessage: item, thread: enrichThreadForAdmin(thread), notification: notif });
   await sendMobilePushNotification({
     title: `✉️ Support : ${cleanName}`,
     message: `${cleanEmail}\n${cleanMsg.slice(0, 250)}`,
@@ -1476,6 +2454,7 @@ app.post("/api/admin/login", async (req, res) => {
 
 app.post("/api/admin/logout", (req, res) => {
   db.revokeAdminSession(extractAdminToken(req));
+  sendClearSiteDataHeader(res);
   res.json({ ok: true });
 });
 
@@ -1491,12 +2470,14 @@ app.get("/api/events/admin", requireAdmin, (req, res) => {
 });
 
 app.get("/api/admin/dashboard", requireAdmin, async (_req, res) => {
-  const orders = db.data.orders;
+  const ctx = getDiagnosticContext();
+  const orders = db.data.orders.map((o) => enrichOrderForAdmin(o));
   const paidOrders = orders.filter((o) => o.paymentStatus === "paid");
   const totalRevenue = Math.round(paidOrders.reduce((acc, o) => acc + Number(o.total || 0), 0) * 100) / 100;
   const pendingDeliveries = orders.filter(
     (o) => (o.paymentStatus === "paid" || o.paymentStatus === "declaration_sent") && o.deliveryStatus !== "delivered"
   ).length;
+  const highRiskOrdersCount = orders.filter((o) => (o.riskScore || 0) >= 45).length;
 
   const enrichedDiscussions = db.data.discussions
     .map((t) => enrichThreadForAdmin(t))
@@ -1506,9 +2487,51 @@ app.get("/api/admin/dashboard", requireAdmin, async (_req, res) => {
     (t) => !t.diagnostics.isResolved && (t.diagnostics.waitingSince || t.unreadByAdmin > 0)
   ).length;
   const urgentDiscussionsCount = enrichedDiscussions.filter(
-    (t) => !t.diagnostics.isResolved && (t.diagnostics.needsFastHelp || t.diagnostics.isAnnoyed)
+    (t) => !t.diagnostics.isResolved && (t.diagnostics.needsFastHelp || t.diagnostics.isAnnoyed || t.diagnostics.isFurious)
   ).length;
   const fraudDiscussionsCount = enrichedDiscussions.filter((t) => t.diagnostics.isSuspectedFraud).length;
+  const furiousDiscussionsCount = enrichedDiscussions.filter(
+    (t) => !t.diagnostics.isResolved && t.diagnostics.isFurious
+  ).length;
+  const anxiousDiscussionsCount = enrichedDiscussions.filter(
+    (t) => !t.diagnostics.isResolved && t.diagnostics.isAnxious
+  ).length;
+
+  // Évaluation complète de tous les comptes clients + visiteurs suivis sur le site
+  db.pruneExpiredUserSessions();
+  const customers = (db.data.users || [])
+    .map((u) => computeCustomerProfileAssessment(u, { allOrders: db.data.orders, ...ctx }))
+    .sort((a, b) => b.fraudAssessment.score - a.fraudAssessment.score);
+
+  const highRiskCustomers = customers.filter((c) => c.fraudAssessment.score >= 45).length;
+
+  // Visiteurs anonymes suivis sur le site (non rattachés à un compte inscrit)
+  const trackedVisitors = Object.values(db.data.visitorProfiles || {})
+    .filter((p) => p && !p.userId)
+    .map((p) => {
+      const assessment = computeComprehensiveFraudRisk({
+        email: p.email || "",
+        clientHash: p.clientHashes?.[0] || "",
+        deviceFingerprint: p.deviceFingerprints?.[0] || "",
+        visitorId: p.visitorId || "",
+        existingOrders: db.data.orders,
+        ...ctx
+      });
+      return {
+        key: p.key,
+        visitorId: p.visitorId,
+        email: p.email || "",
+        clientHash: p.clientHashes?.[0] || "",
+        deviceFingerprint: p.deviceFingerprints?.[0] || "",
+        userAgentSummary: p.userAgentSummary || "",
+        firstSeenAt: p.firstSeenAt,
+        lastSeenAt: p.lastSeenAt,
+        sessionCount: p.sessionCount || 1,
+        fraudAssessment: assessment
+      };
+    })
+    .sort((a, b) => b.fraudAssessment.score - a.fraudAssessment.score || new Date(b.lastSeenAt) - new Date(a.lastSeenAt))
+    .slice(0, 60);
 
   const ntfyInfo = await generateNtfyQrDataUrl();
   const s = db.data.settings;
@@ -1518,22 +2541,35 @@ app.get("/api/admin/dashboard", requireAdmin, async (_req, res) => {
       name: db.data.admin.name,
       email: db.data.admin.email
     },
+    flagDefinitions: FLAG_DEFINITIONS,
     stats: {
       totalOrders: orders.length,
       paidOrders: paidOrders.length,
       totalRevenue,
       pendingDeliveries,
+      highRiskOrdersCount,
       openWaitingDiscussions,
       urgentDiscussionsCount,
       fraudDiscussionsCount,
+      furiousDiscussionsCount,
+      anxiousDiscussionsCount,
+      totalCustomers: customers.length,
+      activeCustomerSessions: (db.data.userSessions || []).length,
+      highRiskCustomers,
+      trackedVisitorsCount: trackedVisitors.length,
       unreadNotifications: db.data.notifications.filter((n) => !n.read).length
     },
     orders,
     discussions: enrichedDiscussions,
+    customers,
+    trackedVisitors,
     rescueClaims: db.data.rescueClaims || [],
     security: {
       blockedEmails: db.data.security?.blockedEmails || [],
-      blockedHashesCount: (db.data.security?.blockedHashes || []).length
+      blockedHashesCount: (db.data.security?.blockedHashes || []).length,
+      blockedFingerprintsCount: (db.data.security?.blockedFingerprints || []).length,
+      trustedEmails: db.data.security?.trustedEmails || [],
+      recentEvents: (db.data.security?.securityEvents || []).slice(0, 25)
     },
     products: [...db.data.products].sort((a, b) => (a.sortOrder || 99) - (b.sortOrder || 99)),
     coupons: db.data.coupons,
@@ -1584,7 +2620,7 @@ app.get("/api/admin/dashboard", requireAdmin, async (_req, res) => {
   });
 });
 
-// Actions Admin sur les Discussions (Marquer lu, Résolu, Suspect Fraude, Aide rapide, Agacé, Bloquer client)
+// Actions Admin sur les Discussions (Flags précis Auto/Manuel, Notes privées, Blocage, Whitelist)
 app.post("/api/admin/discussions/:threadId/read", requireAdmin, (req, res) => {
   const thread = db.data.discussions.find((t) => t.threadId === req.params.threadId);
   if (!thread) return res.status(404).json({ error: "Discussion introuvable." });
@@ -1597,36 +2633,200 @@ app.patch("/api/admin/discussions/:threadId/flags", requireAdmin, (req, res) => 
   const thread = db.data.discussions.find((t) => t.threadId === req.params.threadId);
   if (!thread) return res.status(404).json({ error: "Discussion introuvable." });
 
-  const { status, fraud, annoyed, fastHelp, blockClient } = req.body || {};
+  const { status, fraud, annoyed, fastHelp, flagId, flagValue, adminNotes, blockClient, trustClient } = req.body || {};
   thread.manualFlags = thread.manualFlags || {};
+  db.data.security = db.data.security || {
+    blockedEmails: [],
+    blockedHashes: [],
+    blockedFingerprints: [],
+    trustedEmails: [],
+    trustedUserIds: []
+  };
 
   if (status === "open" || status === "resolved") {
     thread.status = status;
     if (status === "resolved") thread.unreadByAdmin = 0;
   }
-  if (fraud !== undefined) thread.manualFlags.fraud = fraud;
+  if (fraud !== undefined) {
+    thread.manualFlags.fraud = fraud;
+    thread.manualFlags.fraud_risk = fraud;
+  }
   if (annoyed !== undefined) thread.manualFlags.annoyed = annoyed;
-  if (fastHelp !== undefined) thread.manualFlags.fastHelp = fastHelp;
+  if (fastHelp !== undefined) {
+    thread.manualFlags.fastHelp = fastHelp;
+    thread.manualFlags.fast_help = fastHelp;
+  }
+  if (flagId && FLAG_DEFINITIONS.some((f) => f.id === flagId)) {
+    if (flagValue === null || flagValue === "auto") {
+      delete thread.manualFlags[flagId];
+    } else {
+      thread.manualFlags[flagId] = Boolean(flagValue);
+    }
+  }
+  if (adminNotes !== undefined) {
+    thread.adminNotes = String(adminNotes || "").trim().slice(0, 1000);
+  }
+
+  const cleanEmail = canonicalizeEmail(thread.customerEmail);
+  if (trustClient === true && cleanEmail) {
+    if (!db.data.security.trustedEmails.includes(cleanEmail)) db.data.security.trustedEmails.push(cleanEmail);
+    thread.manualFlags.trusted_verified = true;
+    thread.manualFlags.fraud_risk = false;
+    thread.manualFlags.fraud_critical = false;
+    thread.manualFlags.fraud = false;
+  } else if (trustClient === false && cleanEmail) {
+    db.data.security.trustedEmails = (db.data.security.trustedEmails || []).filter((e) => e !== cleanEmail);
+    delete thread.manualFlags.trusted_verified;
+  }
 
   if (blockClient === true) {
-    db.data.security = db.data.security || { blockedEmails: [], blockedHashes: [] };
-    if (thread.customerEmail && !db.data.security.blockedEmails.includes(thread.customerEmail)) {
-      db.data.security.blockedEmails.push(thread.customerEmail);
+    if (cleanEmail && !db.data.security.blockedEmails.includes(cleanEmail)) {
+      db.data.security.blockedEmails.push(cleanEmail);
     }
     if (thread.clientHash && !db.data.security.blockedHashes.includes(thread.clientHash)) {
       db.data.security.blockedHashes.push(thread.clientHash);
     }
+    if (thread.deviceFingerprint && !db.data.security.blockedFingerprints.includes(thread.deviceFingerprint)) {
+      db.data.security.blockedFingerprints.push(thread.deviceFingerprint);
+    }
+    // Suspendre aussi le compte lié si existant
+    const linkedUser = db.data.users.find(
+      (u) => (thread.userId && u.id === thread.userId) || (cleanEmail && canonicalizeEmail(u.email) === cleanEmail)
+    );
+    if (linkedUser) {
+      linkedUser.status = "suspended";
+      db.revokeAllUserSessions(linkedUser.id);
+    }
+    thread.manualFlags.fraud_critical = true;
     thread.manualFlags.fraud = true;
     thread.status = "resolved";
   } else if (blockClient === false) {
-    if (db.data.security) {
-      db.data.security.blockedEmails = (db.data.security.blockedEmails || []).filter((e) => e !== thread.customerEmail);
-      db.data.security.blockedHashes = (db.data.security.blockedHashes || []).filter((h) => h !== thread.clientHash);
-    }
+    db.data.security.blockedEmails = (db.data.security.blockedEmails || []).filter((e) => e !== cleanEmail);
+    db.data.security.blockedHashes = (db.data.security.blockedHashes || []).filter((h) => h !== thread.clientHash);
+    db.data.security.blockedFingerprints = (db.data.security.blockedFingerprints || []).filter(
+      (fp) => fp !== thread.deviceFingerprint
+    );
   }
 
   db.save();
   res.json({ thread: enrichThreadForAdmin(thread) });
+});
+
+// Gestion Admin des Comptes Clients, Flags Client, Suspension & Whitelist
+app.patch("/api/admin/customers/:userId", requireAdmin, (req, res) => {
+  const user = db.data.users.find((u) => u.id === req.params.userId);
+  if (!user) return res.status(404).json({ error: "Compte client introuvable." });
+
+  const { status, trustedOverride, flagId, flagValue, adminNotes, blockClient } = req.body || {};
+  user.manualFlags = user.manualFlags || {};
+  db.data.security = db.data.security || {
+    blockedEmails: [],
+    blockedHashes: [],
+    blockedFingerprints: [],
+    trustedEmails: [],
+    trustedUserIds: []
+  };
+
+  if (status === "active" || status === "suspended") {
+    user.status = status;
+    if (status === "suspended") {
+      db.revokeAllUserSessions(user.id);
+      pushUserSecurityLog(user, { action: "Compte suspendu par l'administrateur", detail: "Toutes les sessions révoquées" });
+    } else {
+      pushUserSecurityLog(user, { action: "Compte réactivé par l'administrateur", detail: "Accès rétabli" });
+    }
+  }
+
+  if (trustedOverride !== undefined) {
+    user.trustedOverride = Boolean(trustedOverride);
+    const cleanEmail = canonicalizeEmail(user.email);
+    if (user.trustedOverride) {
+      if (!db.data.security.trustedEmails.includes(cleanEmail)) db.data.security.trustedEmails.push(cleanEmail);
+      if (!db.data.security.trustedUserIds.includes(user.id)) db.data.security.trustedUserIds.push(user.id);
+    } else {
+      db.data.security.trustedEmails = (db.data.security.trustedEmails || []).filter((e) => e !== cleanEmail);
+      db.data.security.trustedUserIds = (db.data.security.trustedUserIds || []).filter((id) => id !== user.id);
+    }
+  }
+
+  if (flagId && FLAG_DEFINITIONS.some((f) => f.id === flagId)) {
+    if (flagValue === null || flagValue === "auto") {
+      delete user.manualFlags[flagId];
+    } else {
+      user.manualFlags[flagId] = Boolean(flagValue);
+    }
+  }
+
+  if (adminNotes !== undefined) {
+    user.adminNotes = String(adminNotes || "").trim().slice(0, 1000);
+  }
+
+  const cleanEmail = canonicalizeEmail(user.email);
+  if (blockClient === true) {
+    user.status = "suspended";
+    db.revokeAllUserSessions(user.id);
+    if (cleanEmail && !db.data.security.blockedEmails.includes(cleanEmail)) db.data.security.blockedEmails.push(cleanEmail);
+    if (user.lastClientHash && !db.data.security.blockedHashes.includes(user.lastClientHash)) {
+      db.data.security.blockedHashes.push(user.lastClientHash);
+    }
+    if (user.lastDeviceFingerprint && !db.data.security.blockedFingerprints.includes(user.lastDeviceFingerprint)) {
+      db.data.security.blockedFingerprints.push(user.lastDeviceFingerprint);
+    }
+    user.manualFlags.fraud_critical = true;
+  } else if (blockClient === false) {
+    user.status = "active";
+    db.data.security.blockedEmails = (db.data.security.blockedEmails || []).filter((e) => e !== cleanEmail);
+    db.data.security.blockedHashes = (db.data.security.blockedHashes || []).filter((h) => h !== user.lastClientHash);
+    db.data.security.blockedFingerprints = (db.data.security.blockedFingerprints || []).filter(
+      (fp) => fp !== user.lastDeviceFingerprint
+    );
+    delete user.manualFlags.fraud_critical;
+  }
+
+  user.updatedAt = new Date().toISOString();
+  db.save();
+  res.json({
+    customer: computeCustomerProfileAssessment(user, { allOrders: db.data.orders, ...getDiagnosticContext() })
+  });
+});
+
+app.post("/api/admin/visitors/:visitorKey/block", requireAdmin, (req, res) => {
+  const key = decodeURIComponent(req.params.visitorKey || "");
+  const profile = db.data.visitorProfiles?.[key];
+  if (!profile) return res.status(404).json({ error: "Profil visiteur introuvable." });
+
+  db.data.security = db.data.security || { blockedEmails: [], blockedHashes: [], blockedFingerprints: [] };
+  if (profile.email && !db.data.security.blockedEmails.includes(profile.email)) {
+    db.data.security.blockedEmails.push(profile.email);
+  }
+  for (const h of profile.clientHashes || []) {
+    if (h && !db.data.security.blockedHashes.includes(h)) db.data.security.blockedHashes.push(h);
+  }
+  for (const fp of profile.deviceFingerprints || []) {
+    if (fp && !db.data.security.blockedFingerprints.includes(fp)) db.data.security.blockedFingerprints.push(fp);
+  }
+  db.recordSecurityEvent({
+    type: "visitor_blocked_admin",
+    visitorKey: key,
+    email: profile.email || ""
+  });
+  db.save();
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/security/unblock", requireAdmin, (req, res) => {
+  const { email = "", clearAllHashes = false } = req.body || {};
+  db.data.security = db.data.security || { blockedEmails: [], blockedHashes: [], blockedFingerprints: [] };
+  if (email) {
+    const clean = canonicalizeEmail(email);
+    db.data.security.blockedEmails = (db.data.security.blockedEmails || []).filter((e) => e !== clean);
+  }
+  if (clearAllHashes) {
+    db.data.security.blockedHashes = [];
+    db.data.security.blockedFingerprints = [];
+  }
+  db.save();
+  res.json({ ok: true });
 });
 
 app.delete("/api/admin/discussions/:threadId", requireAdmin, (req, res) => {

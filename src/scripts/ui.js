@@ -1,6 +1,7 @@
 import { store, getProductSvgIcon } from "./store.js";
 import { closeDialogSmoothly, showToast, escapeHtml } from "./mwg-helpers.js";
 import { openCustomerDiscussion } from "./discussion-widget.js";
+import { siteTracker } from "./site-tracker.js";
 
 function computeSavingsInfo(product) {
   const price = Number(product.price) || 0;
@@ -138,6 +139,7 @@ export function renderProductGrid() {
 export function openProductDetail(productId) {
   const product = store.getProductById(productId);
   if (!product) return;
+  siteTracker.track("product_detail_open", product.title);
 
   const dialog = document.getElementById("product-detail-dialog");
   const content = document.getElementById("product-detail-dialog-content");

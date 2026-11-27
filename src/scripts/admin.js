@@ -1,19 +1,23 @@
 /**
- * Espace Administrateur Complet (v3) :
- * - Menu "💬 Discussions" avec mise en page Split-View claire et diagnostics précis en direct :
- *   • "⏳ En attente depuis X" (rafraîchi en continu avec Intl.DurationFormat)
- *   • "⚡ Nécessite de l'aide rapide"
- *   • "😤 Agacé"
- *   • "🚨 Suspecté de fraude" (avec score & raisons détaillées + blocage 1-clic)
- * - Catalogue : Prix, Prix barrés, Disponibilités & Stocks en 1 clic
- * - Commandes & Livraison directe (Coffre chiffré sur le site + E-mail) + Alertes Anti-Fraude
- * - Notifications Téléphone (QR ntfy) & Configuration Stripe / PayPal / SEPA / Sécurité Admin
+ * Espace Administrateur Complet (v4) :
+ * - Système avancé de Flags Précis (25 flags structurés en 4 catégories : Sécurité/Fraude, Émotion/Ton,
+ *   Urgence/Opérations, Commercial/Confiance) avec gestion Auto / Forcé Manuel / Ignoré + Notes privées
+ * - Visualisation complète de l'Algorithme Anti-Fraude en 6 Dimensions + Suivi Comportemental du Parcours Site
+ * - Nouvel Onglet "👤 Clients & Anti-Fraude" (Comptes inscrits, Visiteurs suivis en direct, Suspension, Whitelist, Blocage)
+ * - Discussions Split-View, Commandes & Livraison chiffrée, Catalogue temps réel, Téléphone ntfy & Paiements
  */
 
 import { store } from "./store.js";
 import { closeDialogSmoothly, showToast, playChime, escapeHtml } from "./mwg-helpers.js";
 
 const ADMIN_TOKEN_KEY = "nexus_admin_jwt_v2";
+
+const FLAG_CATEGORY_LABELS = {
+  fraud: "🚨 Sécurité & Risque de Fraude",
+  emotion: "🎭 État Émotionnel & Ton",
+  urgency: "⚡ Urgence & Opérations",
+  commercial: "⭐ Profil Commercial & Confiance"
+};
 
 function formatLiveWaitingLabel(waitingSinceIso) {
   if (!waitingSinceIso) return null;
@@ -38,13 +42,188 @@ function formatLiveWaitingLabel(waitingSinceIso) {
   return `En attente depuis ${minutes} min`;
 }
 
+function formatDurationSec(sec) {
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  if (m < 60) return r > 0 ? `${m}m ${r}s` : `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+function getRiskMeterClass(score) {
+  const s = Number(score || 0);
+  if (s >= 70) return "risk-critical";
+  if (s >= 45) return "risk-elevated";
+  if (s >= 25) return "risk-moderate";
+  return "risk-low";
+}
+
+function getRiskLevelLabel(score) {
+  const s = Number(score || 0);
+  if (s >= 70) return "Critique";
+  if (s >= 45) return "Élevé";
+  if (s >= 25) return "Modéré";
+  return "Faible";
+}
+
+/**
+ * Rend le panneau détaillé d'analyse Anti-Fraude en 6 dimensions + suivi complet sur le site
+ */
+function renderFraudAnalyticsPanel(assessment, { openByDefault = false, compactTitle = "🔬 Analyse Anti-Fraude (6 Dimensions) & Parcours Complet sur le Site" } = {}) {
+  if (!assessment) return "";
+  const dims = assessment.dimensions || {};
+  const journey = assessment.siteJourneySummary;
+  const signals = Array.isArray(assessment.signals) ? assessment.signals : [];
+  const score = Number(assessment.score || 0);
+  const confidence = Number(assessment.confidence || 0);
+  const meterCls = getRiskMeterClass(score);
+
+  const dimRows = [
+    { label: "Identité & E-mail", val: Number(dims.identity || 0), max: 100 },
+    { label: "Comportement Site", val: Number(dims.behavioral || 0), max: 100 },
+    { label: "Vélocité & Multi-Comptes", val: Number(dims.velocityGraph || 0), max: 100 },
+    { label: "Paiement & Transactions", val: Number(dims.payment || 0), max: 100 },
+    { label: "Linguistique & Social Eng.", val: Number(dims.linguistic || 0), max: 100 }
+  ];
+  const trustBonus = Number(dims.trustBonus || 0);
+
+  return `
+    <details class="admin-fraud-details ${meterCls}" ${openByDefault ? "open" : ""}>
+      <summary class="admin-fraud-summary">
+        <span>${compactTitle}</span>
+        <span class="fraud-score-pill ${meterCls}">
+          Score : <strong>${score}/100</strong> (${getRiskLevelLabel(score)}) • Confiance ${confidence}%
+        </span>
+      </summary>
+
+      <div class="admin-fraud-panel-body">
+        <div class="fraud-reco-banner ${meterCls}">
+          <strong>Action recommandée :</strong> ${escapeHtml(assessment.recommendationLabel || "")}
+        </div>
+
+        <!-- 6 Dimensions Visuelles -->
+        <div class="fraud-dims-grid">
+          ${dimRows
+            .map(
+              (d) => `
+              <div class="fraud-dim-row">
+                <div class="fraud-dim-meta">
+                  <span>${d.label}</span>
+                  <strong>${d.val}/100</strong>
+                </div>
+                <div class="fraud-dim-track">
+                  <div class="fraud-dim-fill ${getRiskMeterClass(d.val)}" style="width:${Math.min(100, d.val)}%"></div>
+                </div>
+              </div>
+            `
+            )
+            .join("")}
+          <div class="fraud-dim-row">
+            <div class="fraud-dim-meta">
+              <span>🛡️ Modificateur Confiance</span>
+              <strong class="trust-bonus-val">${trustBonus < 0 ? `${trustBonus} pts` : "0 pt"}</strong>
+            </div>
+            <div class="fraud-dim-track">
+              <div class="fraud-dim-fill risk-low" style="width:${Math.min(100, Math.abs(trustBonus) * 2.5)}%"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Signaux précis détectés -->
+        ${
+          signals.length > 0
+            ? `
+            <div class="fraud-signals-block">
+              <h3>Signaux détectés (${signals.length})</h3>
+              <ul class="fraud-signals-list">
+                ${signals
+                  .map(
+                    (s) => `
+                    <li class="fraud-signal-item sev-${escapeHtml(s.severity || "medium")}">
+                      <span class="signal-weight-tag ${s.weight < 0 ? "positive" : ""}">${s.weight > 0 ? `+${s.weight}` : s.weight}</span>
+                      <div>
+                        <strong>${escapeHtml(s.label)}</strong>
+                        <span>${escapeHtml(s.detail)}</span>
+                      </div>
+                    </li>
+                  `
+                  )
+                  .join("")}
+              </ul>
+            </div>
+          `
+            : `<p class="text-subtle-sm">Aucun signal d'anomalie détecté sur les 6 dimensions.</p>`
+        }
+
+        <!-- Suivi comportemental complet sur le site -->
+        ${
+          journey
+            ? `
+            <div class="site-journey-block">
+              <h3>🧭 Suivi Comportemental sur le Site</h3>
+              <div class="journey-kpis-grid">
+                <div class="journey-kpi"><span>Temps site</span><strong>${formatDurationSec(journey.totalDurationSec)}</strong></div>
+                <div class="journey-kpi"><span>Scroll max</span><strong>${journey.maxScrollDepthPct}%</strong></div>
+                <div class="journey-kpi"><span>Sessions</span><strong>${journey.sessionCount}</strong></div>
+                <div class="journey-kpi"><span>Interactions</span><strong>${journey.pointerMoves} mvt • ${journey.clickCount} clics</strong></div>
+                <div class="journey-kpi ${journey.couponFailures >= 3 ? "kpi-warn" : ""}"><span>Promos ratés</span><strong>${journey.couponFailures}</strong></div>
+                <div class="journey-kpi ${journey.orderLookupFailures >= 2 ? "kpi-warn" : ""}"><span>Lookups ratés</span><strong>${journey.orderLookupFailures}</strong></div>
+                <div class="journey-kpi ${journey.loginFailures >= 2 ? "kpi-warn" : ""}"><span>Logins ratés</span><strong>${journey.loginFailures}</strong></div>
+                <div class="journey-kpi ${journey.paymentMethodSwitches >= 3 ? "kpi-warn" : ""}"><span>Switch paiement</span><strong>${journey.paymentMethodSwitches}</strong></div>
+              </div>
+
+              <div class="journey-meta-tags">
+                ${journey.userAgentSummary ? `<span class="meta-mini-chip">💻 ${escapeHtml(journey.userAgentSummary)}</span>` : ""}
+                ${journey.timezone ? `<span class="meta-mini-chip">🌍 ${escapeHtml(journey.timezone)} (${escapeHtml(journey.language || "?")})</span>` : ""}
+                ${journey.screenSize ? `<span class="meta-mini-chip">🖥️ ${escapeHtml(journey.screenSize)}</span>` : ""}
+                ${journey.linkedUsersCount > 1 ? `<span class="meta-mini-chip warn">👥 ${journey.linkedUsersCount} comptes sur cette empreinte</span>` : ""}
+                ${journey.webdriverDetected ? `<span class="meta-mini-chip danger">🤖 WebDriver détecté</span>` : ""}
+                ${journey.viewedProducts?.length ? `<span class="meta-mini-chip">📦 Vus : ${journey.viewedProducts.map(escapeHtml).join(", ")}</span>` : ""}
+                ${journey.sectionsVisited?.length ? `<span class="meta-mini-chip">📍 Sections : ${journey.sectionsVisited.map(escapeHtml).join(", ")}</span>` : ""}
+              </div>
+
+              ${
+                journey.recentEvents?.length
+                  ? `
+                  <div class="journey-timeline">
+                    <strong>Dernières actions sur le site :</strong>
+                    <ul>
+                      ${journey.recentEvents
+                        .slice(0, 8)
+                        .map(
+                          (ev) => `
+                          <li>
+                            <span class="tl-time">${new Date(ev.ts).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                            <code class="tl-type">${escapeHtml(ev.type)}</code>
+                            <span class="tl-label">${escapeHtml(ev.label || "")}${ev.ok === false ? " ❌" : ev.ok === true ? " ✓" : ""}</span>
+                          </li>
+                        `
+                        )
+                        .join("")}
+                    </ul>
+                  </div>
+                `
+                  : ""
+              }
+            </div>
+          `
+            : `<p class="text-subtle-sm">En attente de données de suivi comportemental pour cette session.</p>`
+        }
+      </div>
+    </details>
+  `;
+}
+
 class AdminController {
   constructor() {
     this.token = localStorage.getItem(ADMIN_TOKEN_KEY) || "";
     this.dashboard = null;
-    this.activeTab = "discussions"; // 'discussions' | 'orders' | 'catalog' | 'integrations' | 'coupons'
+    this.activeTab = "discussions"; // 'discussions' | 'orders' | 'customers' | 'catalog' | 'integrations' | 'coupons'
     this.orderFilter = "all";
-    this.discFilter = "all"; // 'all' | 'fast_help' | 'waiting' | 'annoyed' | 'fraud' | 'resolved'
+    this.discFilter = "all";
+    this.customerFilter = "all"; // 'all' | 'high_risk' | 'vip' | 'suspended' | 'visitors'
+    this.customerSearch = "";
     this.selectedThreadId = null;
     this.adminSse = null;
     this.pendingDeepLinkOrderId = null;
@@ -56,7 +235,6 @@ class AdminController {
     if (this.token) {
       this.refreshDashboardSilently();
     }
-    // Rafraîchir les compteurs "En attente depuis X" toutes les 30s si le menu Admin est ouvert
     this.liveTimerInterval = setInterval(() => {
       const dialog = document.getElementById("admin-dialog");
       if (dialog?.open && this.activeTab === "discussions" && this.dashboard) {
@@ -108,6 +286,7 @@ class AdminController {
       es.addEventListener("order_created", () => onEvent("order_created"));
       es.addEventListener("order_updated", () => onEvent("order_updated"));
       es.addEventListener("discussion_updated", () => onEvent("discussion_updated"));
+      es.addEventListener("customer_updated", () => onEvent("customer_updated"));
       es.addEventListener("notification", () => onEvent("notification"));
       es.addEventListener("support_message", () => onEvent("support_message"));
       this.adminSse = es;
@@ -206,6 +385,7 @@ class AdminController {
                 value=""
                 placeholder="Saisissez votre identifiant"
                 autocomplete="username"
+                spellcheck="false"
                 autofocus
                 required
               />
@@ -277,7 +457,8 @@ class AdminController {
             <p class="admin-subtitle">
               ${escapeHtml(d.admin.name)} • CA : <strong>${d.stats.totalRevenue} €</strong> •
               À livrer : <strong>${d.stats.pendingDeliveries}</strong> •
-              Discussions en attente : <strong>${d.stats.openWaitingDiscussions || 0}</strong>
+              Comptes : <strong>${d.stats.totalCustomers || 0}</strong> •
+              Alertes Fraude : <strong>${(d.stats.fraudDiscussionsCount || 0) + (d.stats.highRiskCustomers || 0)}</strong>
             </p>
           </div>
         </div>
@@ -291,7 +472,7 @@ class AdminController {
 
       <div class="admin-tabs-nav mwg-tablist-scroller" role="tablist" aria-label="Sections Administration">
         <button type="button" role="tab" aria-selected="${this.activeTab === "discussions"}" class="admin-tab-btn ${this.activeTab === "discussions" ? "active" : ""}" data-admin-tab="discussions">
-          <span>💬 Discussions</span>
+          <span>💬 Discussions &amp; Flags</span>
           ${
             (d.stats.urgentDiscussionsCount || 0) > 0
               ? `<span class="tab-badge-count">${d.stats.urgentDiscussionsCount} urg.</span>`
@@ -304,8 +485,17 @@ class AdminController {
           ${d.stats.pendingDeliveries > 0 ? `<span class="tab-badge-count">${d.stats.pendingDeliveries}</span>` : `<span class="tab-badge-count muted">${d.orders.length}</span>`}
         </button>
 
+        <button type="button" role="tab" aria-selected="${this.activeTab === "customers"}" class="admin-tab-btn ${this.activeTab === "customers" ? "active" : ""}" data-admin-tab="customers">
+          <span>👤 Clients &amp; Anti-Fraude</span>
+          ${
+            (d.stats.highRiskCustomers || 0) > 0
+              ? `<span class="tab-badge-count">${d.stats.highRiskCustomers} risque</span>`
+              : `<span class="tab-badge-count muted">${d.stats.totalCustomers || 0}</span>`
+          }
+        </button>
+
         <button type="button" role="tab" aria-selected="${this.activeTab === "catalog"}" class="admin-tab-btn ${this.activeTab === "catalog" ? "active" : ""}" data-admin-tab="catalog">
-          <span>📦 Prix &amp; Disponibilités (${d.products.length})</span>
+          <span>📦 Catalogue (${d.products.length})</span>
         </button>
 
         <button type="button" role="tab" aria-selected="${this.activeTab === "integrations"}" class="admin-tab-btn ${this.activeTab === "integrations" ? "active" : ""}" data-admin-tab="integrations">
@@ -313,7 +503,7 @@ class AdminController {
         </button>
 
         <button type="button" role="tab" aria-selected="${this.activeTab === "coupons"}" class="admin-tab-btn ${this.activeTab === "coupons" ? "active" : ""}" data-admin-tab="coupons">
-          <span>🏷️ Codes Promo (${d.coupons.length})</span>
+          <span>🏷️ Promos (${d.coupons.length})</span>
         </button>
       </div>
 
@@ -338,29 +528,41 @@ class AdminController {
   renderTabBody(d, savedDraft = "") {
     if (this.activeTab === "discussions") return this.renderDiscussionsMenu(d, savedDraft);
     if (this.activeTab === "orders") return this.renderOrdersTab(d.orders, d.stats);
+    if (this.activeTab === "customers") return this.renderCustomersAntiFraudTab(d);
     if (this.activeTab === "catalog") return this.renderCatalogTab(d.products);
     if (this.activeTab === "integrations") return this.renderIntegrationsTab(d.settings, d.ntfyInfo, d.admin, d.security);
     return this.renderCouponsTab(d.coupons);
   }
 
   // ==========================================================================
-  // MENU "DISCUSSIONS" : SPLIT-VIEW CLAIRE & INDICATIONS PRÉCISES EN DIRECT
+  // MENU "DISCUSSIONS" : FLAGS PRÉCIS + ANALYSE ANTI-FRAUDE 6D + PARCOURS SITE
   // ==========================================================================
   renderDiscussionsMenu(d, savedDraft = "") {
     const threads = d.discussions || [];
 
+    const hasFlag = (t, id) => (t.diagnostics?.flagIds || []).includes(id);
     const countFast = threads.filter((t) => !t.diagnostics.isResolved && t.diagnostics.needsFastHelp).length;
     const countWaiting = threads.filter((t) => !t.diagnostics.isResolved && t.diagnostics.waitingSince).length;
-    const countAnnoyed = threads.filter((t) => !t.diagnostics.isResolved && t.diagnostics.isAnnoyed).length;
+    const countFurious = threads.filter((t) => !t.diagnostics.isResolved && hasFlag(t, "furious_escalation")).length;
+    const countAnnoyed = threads.filter((t) => !t.diagnostics.isResolved && hasFlag(t, "annoyed")).length;
+    const countAnxious = threads.filter((t) => !t.diagnostics.isResolved && hasFlag(t, "anxious_worried")).length;
     const countFraud = threads.filter((t) => t.diagnostics.isSuspectedFraud).length;
+    const countPressure = threads.filter((t) => hasFlag(t, "chargeback_threat") || hasFlag(t, "social_engineering")).length;
+    const countReady = threads.filter((t) => !t.diagnostics.isResolved && hasFlag(t, "ready_to_buy")).length;
+    const countVip = threads.filter((t) => hasFlag(t, "vip_loyal")).length;
     const countResolved = threads.filter((t) => t.diagnostics.isResolved).length;
 
     const filtered = threads.filter((t) => {
       const dg = t.diagnostics;
       if (this.discFilter === "fast_help") return !dg.isResolved && dg.needsFastHelp;
       if (this.discFilter === "waiting") return !dg.isResolved && Boolean(dg.waitingSince);
-      if (this.discFilter === "annoyed") return !dg.isResolved && dg.isAnnoyed;
+      if (this.discFilter === "furious") return !dg.isResolved && hasFlag(t, "furious_escalation");
+      if (this.discFilter === "annoyed") return !dg.isResolved && hasFlag(t, "annoyed");
+      if (this.discFilter === "anxious") return !dg.isResolved && hasFlag(t, "anxious_worried");
       if (this.discFilter === "fraud") return dg.isSuspectedFraud;
+      if (this.discFilter === "pressure") return hasFlag(t, "chargeback_threat") || hasFlag(t, "social_engineering");
+      if (this.discFilter === "ready") return !dg.isResolved && hasFlag(t, "ready_to_buy");
+      if (this.discFilter === "vip") return hasFlag(t, "vip_loyal");
       if (this.discFilter === "resolved") return dg.isResolved;
       return true;
     });
@@ -373,24 +575,43 @@ class AdminController {
     const isBlockedClient =
       activeThread &&
       (d.security?.blockedEmails || []).includes((activeThread.customerEmail || "").toLowerCase());
+    const isTrustedClient =
+      activeThread &&
+      ((d.security?.trustedEmails || []).includes((activeThread.customerEmail || "").toLowerCase()) ||
+        (activeThread.diagnostics?.flagIds || []).includes("trusted_verified"));
 
     return `
-      <!-- Barre de filtres diagnostics précis -->
+      <!-- Barre de filtres par flags précis -->
       <div class="disc-admin-filters-bar">
         <button type="button" class="filter-pill ${this.discFilter === "all" ? "active" : ""}" data-disc-filter="all">
           Toutes (${threads.length})
         </button>
         <button type="button" class="filter-pill pill-filter-urgent ${this.discFilter === "fast_help" ? "active" : ""}" data-disc-filter="fast_help">
-          ⚡ Nécessite de l'aide rapide (${countFast})
+          ⚡ Urgences (${countFast})
         </button>
         <button type="button" class="filter-pill ${this.discFilter === "waiting" ? "active" : ""}" data-disc-filter="waiting">
           ⏳ En attente (${countWaiting})
         </button>
+        <button type="button" class="filter-pill pill-filter-fraud ${this.discFilter === "furious" ? "active" : ""}" data-disc-filter="furious">
+          🤬 Très en colère (${countFurious})
+        </button>
         <button type="button" class="filter-pill pill-filter-annoyed ${this.discFilter === "annoyed" ? "active" : ""}" data-disc-filter="annoyed">
           😤 Agacé (${countAnnoyed})
         </button>
+        <button type="button" class="filter-pill pill-filter-anxious ${this.discFilter === "anxious" ? "active" : ""}" data-disc-filter="anxious">
+          😟 Inquiet (${countAnxious})
+        </button>
         <button type="button" class="filter-pill pill-filter-fraud ${this.discFilter === "fraud" ? "active" : ""}" data-disc-filter="fraud">
-          🚨 Suspecté de fraude (${countFraud})
+          🚨 Risque Fraude (${countFraud})
+        </button>
+        <button type="button" class="filter-pill pill-filter-fraud ${this.discFilter === "pressure" ? "active" : ""}" data-disc-filter="pressure">
+          💳 Chargeback/Pression (${countPressure})
+        </button>
+        <button type="button" class="filter-pill pill-filter-ready ${this.discFilter === "ready" ? "active" : ""}" data-disc-filter="ready">
+          🛒 Prêt à acheter (${countReady})
+        </button>
+        <button type="button" class="filter-pill pill-filter-vip ${this.discFilter === "vip" ? "active" : ""}" data-disc-filter="vip">
+          ⭐ VIP (${countVip})
         </button>
         <button type="button" class="filter-pill ${this.discFilter === "resolved" ? "active" : ""}" data-disc-filter="resolved">
           ✅ Résolues (${countResolved})
@@ -402,43 +623,49 @@ class AdminController {
           ? `
             <div class="admin-empty-state">
               <p><strong>Aucune discussion dans ce filtre pour le moment.</strong></p>
-              <p style="margin-top:0.35rem;">Dès qu'un visiteur pose une question (sur toute la boutique ou sur un article précis) ou ouvre un ticket de secours, sa conversation apparaît ici en direct avec ses indicateurs automatiques.</p>
+              <p style="margin-top:0.35rem;">Les flags automatiques (émotion, fraude comportementale, intention d'achat, urgence) se mettent à jour en temps réel à chaque action client sur le site.</p>
             </div>
           `
           : `
             <div class="admin-discussions-split">
-              <!-- Colonne Gauche : Liste claire des conversations avec badges précis -->
+              <!-- Colonne Gauche : Liste conversations avec flags précis & score fraude -->
               <div class="admin-disc-list-pane">
                 ${filtered
                   .map((t) => {
                     const dg = t.diagnostics;
                     const isSelected = t.threadId === activeThread?.threadId;
                     const liveWait = dg.waitingSince ? formatLiveWaitingLabel(dg.waitingSince) : null;
+                    const topFlags = (dg.flags || []).filter((f) => f.id !== "waiting_long").slice(0, 5);
+                    const riskCls = getRiskMeterClass(dg.riskScore);
 
                     return `
                       <button
                         type="button"
-                        class="admin-disc-item-card ${isSelected ? "selected" : ""} ${dg.needsFastHelp ? "urgent-border" : ""} ${dg.isSuspectedFraud ? "fraud-border" : ""}"
+                        class="admin-disc-item-card ${isSelected ? "selected" : ""} ${dg.needsFastHelp ? "urgent-border" : ""} ${dg.isSuspectedFraud || dg.isFurious ? "fraud-border" : ""}"
                         data-select-thread="${escapeHtml(t.threadId)}"
                       >
                         <div class="disc-card-row-top">
                           <div class="disc-client-ident">
                             <strong>${escapeHtml(t.customerName || "Visiteur")}</strong>
                             ${t.unreadByAdmin > 0 ? `<span class="unread-dot-count">${t.unreadByAdmin}</span>` : ""}
+                            <span class="acct-mini-tag ${dg.isAccountHolder ? "logged" : ""}">${dg.isAccountHolder ? "Compte" : "Invité"}</span>
                           </div>
-                          <span class="disc-topic-mini-tag">${escapeHtml(t.topicLabel || "Général")}</span>
+                          <span class="risk-chip-mini ${riskCls}" title="Score de risque anti-fraude (${dg.riskConfidence || 0}% confiance)">
+                            ${dg.riskScore}/100
+                          </span>
                         </div>
 
-                        <!-- Indications précises automatiques -->
                         <div class="disc-diagnostic-badges">
                           ${
                             liveWait
                               ? `<span class="diag-badge diag-wait-${dg.waitingLevel}" data-waiting-since="${escapeHtml(dg.waitingSince)}">⏳ ${escapeHtml(liveWait)}</span>`
                               : ""
                           }
-                          ${dg.needsFastHelp ? `<span class="diag-badge diag-fast-help">⚡ Nécessite de l'aide rapide</span>` : ""}
-                          ${dg.isAnnoyed ? `<span class="diag-badge diag-annoyed">😤 Agacé</span>` : ""}
-                          ${dg.isSuspectedFraud ? `<span class="diag-badge diag-fraud">🚨 Suspecté de fraude (${dg.riskScore}%)</span>` : ""}
+                          ${topFlags
+                            .map(
+                              (f) => `<span class="diag-badge ${escapeHtml(f.colorClass)}" title="${escapeHtml(f.reason || f.description)}">${f.icon} ${escapeHtml(f.shortLabel)}</span>`
+                            )
+                            .join("")}
                           ${dg.isResolved ? `<span class="diag-badge diag-resolved">✅ Résolu</span>` : ""}
                         </div>
 
@@ -449,9 +676,9 @@ class AdminController {
                   .join("")}
               </div>
 
-              <!-- Colonne Droite : Fiche Diagnostic + Fil de Discussion & Actions 1-Clic -->
+              <!-- Colonne Droite : Fiche Diagnostic Complète, Éditeur de Flags & Fil de Discussion -->
               <div class="admin-disc-detail-pane">
-                ${activeThread ? this.renderSelectedDiscussionDetail(activeThread, d, isBlockedClient, savedDraft) : ""}
+                ${activeThread ? this.renderSelectedDiscussionDetail(activeThread, d, isBlockedClient, isTrustedClient, savedDraft) : ""}
               </div>
             </div>
           `
@@ -459,34 +686,63 @@ class AdminController {
     `;
   }
 
-  renderSelectedDiscussionDetail(t, d, isBlockedClient, savedDraft = "") {
+  renderSelectedDiscussionDetail(t, d, isBlockedClient, isTrustedClient, savedDraft = "") {
     const dg = t.diagnostics;
     const liveWait = dg.waitingSince ? formatLiveWaitingLabel(dg.waitingSince) : null;
+    const flagDefs = d.flagDefinitions || [];
+    const activeFlags = dg.flags || [];
+    const manualFlags = t.manualFlags || {};
+    const riskCls = getRiskMeterClass(dg.riskScore);
+
+    const groupedDefs = ["fraud", "emotion", "urgency", "commercial"].map((cat) => ({
+      cat,
+      title: FLAG_CATEGORY_LABELS[cat],
+      items: flagDefs.filter((f) => f.category === cat && f.manualToggleable)
+    }));
 
     return `
-      <!-- En-tête Diagnostic Détaillé -->
       <div class="disc-detail-header">
         <div class="disc-detail-client-meta">
-          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;">
-            <h2>${escapeHtml(t.customerName)}</h2>
-            ${t.customerEmail ? `<code>${escapeHtml(t.customerEmail)}</code>` : `<span class="text-subtle-sm">(E-mail non renseigné)</span>`}
-            <span class="pm-pill-badge">${escapeHtml(t.topicLabel)}</span>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:0.6rem;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+              <h2>${escapeHtml(t.customerName)}</h2>
+              ${t.customerEmail ? `<code>${escapeHtml(t.customerEmail)}</code>` : `<span class="text-subtle-sm">(E-mail non renseigné)</span>`}
+              <span class="acct-mini-tag ${dg.isAccountHolder ? "logged" : ""}">${dg.isAccountHolder ? "✅ Compte client actif" : "👻 Visiteur invité"}</span>
+              <span class="pm-pill-badge">${escapeHtml(t.topicLabel)}</span>
+            </div>
+            <span class="fraud-score-pill ${riskCls}">
+              Risque Fraude : <strong>${dg.riskScore}/100</strong> (${getRiskLevelLabel(dg.riskScore)} • Conf. ${dg.riskConfidence || 0}%)
+            </span>
           </div>
 
-          <div class="disc-diagnostic-badges" style="margin-top:0.45rem;">
+          <!-- Tous les flags actifs précis avec origine Auto/Manuel et suppression 1-clic -->
+          <div class="disc-diagnostic-badges" style="margin-top:0.55rem;">
             ${
               liveWait
                 ? `<span class="diag-badge diag-wait-${dg.waitingLevel}" data-waiting-since="${escapeHtml(dg.waitingSince)}">⏳ ${escapeHtml(liveWait)}</span>`
-                : `<span class="diag-badge diag-resolved">✓ Répondu / À jour</span>`
+                : `<span class="diag-badge diag-resolved">✓ À jour</span>`
             }
-            ${dg.needsFastHelp ? `<span class="diag-badge diag-fast-help">⚡ Nécessite de l'aide rapide</span>` : ""}
-            ${dg.isAnnoyed ? `<span class="diag-badge diag-annoyed">😤 Client agacé</span>` : ""}
-            ${dg.isSuspectedFraud ? `<span class="diag-badge diag-fraud">🚨 Suspecté de fraude (${dg.riskScore}/100)</span>` : ""}
+            ${activeFlags
+              .filter((f) => f.id !== "waiting_long")
+              .map(
+                (f) => `
+                <span class="diag-badge ${escapeHtml(f.colorClass)} diag-badge-interactive" title="${escapeHtml(f.reason || f.description)}">
+                  <span>${f.icon} ${escapeHtml(f.label)}</span>
+                  <em class="flag-src-tag">${f.source === "manual" ? "M" : "A"}</em>
+                  ${
+                    f.manualToggleable
+                      ? `<button type="button" class="flag-dismiss-x" data-flag-thread="${escapeHtml(t.threadId)}" data-flag-id="${escapeHtml(f.id)}" data-flag-val="false" aria-label="Retirer le flag ${escapeHtml(f.label)}">×</button>`
+                      : ""
+                  }
+                </span>
+              `
+              )
+              .join("")}
             ${
               dg.linkedOrderIds?.length
                 ? dg.linkedOrderIds
                     .map(
-                      (oid) => `<button type="button" class="diag-badge diag-order-link" data-deliver-order="${escapeHtml(oid)}">📦 Ouvrir commande #${escapeHtml(oid)} →</button>`
+                      (oid) => `<button type="button" class="diag-badge diag-order-link" data-deliver-order="${escapeHtml(oid)}">📦 Commande #${escapeHtml(oid)} →</button>`
                     )
                     .join("")
                 : ""
@@ -494,39 +750,72 @@ class AdminController {
           </div>
         </div>
 
-        <!-- Boutons de contrôle manuel des indicateurs & sécurité -->
+        <!-- Barre d'actions rapides & sélecteur complet de flags -->
         <div class="disc-manual-flags-bar">
           <button type="button" class="btn btn-outline btn-xs" data-flag-thread="${escapeHtml(t.threadId)}" data-flag-key="status" data-flag-val="${dg.isResolved ? "open" : "resolved"}">
             ${dg.isResolved ? "↺ Rouvrir" : "✅ Marquer résolu"}
           </button>
-          <button type="button" class="btn btn-outline btn-xs" data-flag-thread="${escapeHtml(t.threadId)}" data-flag-key="fastHelp" data-flag-val="${!dg.needsFastHelp}">
-            ${dg.needsFastHelp ? "Retirer Aide rapide" : "⚡ Aide rapide"}
-          </button>
-          <button type="button" class="btn btn-outline btn-xs" data-flag-thread="${escapeHtml(t.threadId)}" data-flag-key="annoyed" data-flag-val="${!dg.isAnnoyed}">
-            ${dg.isAnnoyed ? "Retirer Agacé" : "😤 Marquer agacé"}
-          </button>
-          <button type="button" class="btn btn-outline btn-xs danger-btn" data-flag-thread="${escapeHtml(t.threadId)}" data-flag-key="fraud" data-flag-val="${!dg.isSuspectedFraud}">
-            ${dg.isSuspectedFraud ? "Lever soupçon fraude" : "🚨 Suspecter fraude"}
+          <button type="button" class="btn btn-outline btn-xs ${isTrustedClient ? "active-trust-btn" : ""}" data-trust-client="${escapeHtml(t.threadId)}" data-trust-val="${!isTrustedClient}">
+            ${isTrustedClient ? "🛡️ Client Fiable ✓" : "🛡️ Marquer Fiable"}
           </button>
           <button type="button" class="btn btn-outline btn-xs danger-btn" data-block-client="${escapeHtml(t.threadId)}" data-block-val="${!isBlockedClient}">
-            ${isBlockedClient ? "Débloquer client" : "🚫 Bloquer client"}
+            ${isBlockedClient ? "Débloquer client" : "🚫 Bloquer (Mail+IP+Appareil)"}
           </button>
           <button type="button" class="btn btn-outline btn-xs" data-delete-thread="${escapeHtml(t.threadId)}" title="Supprimer la discussion">🗑️</button>
         </div>
+
+        <!-- Sélecteur granulaire de tous les flags manuels/auto -->
+        <details class="admin-flag-picker-details">
+          <summary>🏷️ Modifier / Ajouter des flags précis (${activeFlags.length} actifs)</summary>
+          <div class="flag-picker-groups">
+            ${groupedDefs
+              .map(
+                (grp) => `
+                <div class="flag-picker-group">
+                  <span class="flag-picker-cat">${grp.title}</span>
+                  <div class="flag-picker-pills">
+                    ${grp.items
+                      .map((f) => {
+                        const isActive = (dg.flagIds || []).includes(f.id);
+                        const hasManual = manualFlags[f.id] !== undefined;
+                        return `
+                          <button
+                            type="button"
+                            class="flag-toggle-pill ${isActive ? "is-on" : ""} ${hasManual ? "is-manual" : ""}"
+                            data-flag-thread="${escapeHtml(t.threadId)}"
+                            data-flag-id="${escapeHtml(f.id)}"
+                            data-flag-val="${isActive ? "false" : "true"}"
+                            title="${escapeHtml(f.description)}"
+                          >
+                            ${f.icon} ${escapeHtml(f.shortLabel)}
+                          </button>
+                          ${
+                            hasManual
+                              ? `<button type="button" class="flag-reset-auto" data-flag-thread="${escapeHtml(t.threadId)}" data-flag-id="${escapeHtml(f.id)}" data-flag-val="auto" title="Remettre en détection automatique">↺</button>`
+                              : ""
+                          }
+                        `;
+                      })
+                      .join("")}
+                  </div>
+                </div>
+              `
+              )
+              .join("")}
+          </div>
+
+          <form class="admin-private-note-form" data-note-thread="${escapeHtml(t.threadId)}">
+            <label class="form-label" style="font-size:0.74rem;">📝 Note privée administrateur (invisible pour le client)</label>
+            <div style="display:flex;gap:0.45rem;">
+              <input type="text" name="adminNotes" class="form-control form-control-sm" value="${escapeHtml(t.adminNotes || "")}" placeholder="Ex : Virement vérifié sur Caisse d'Épargne, client régulier..." />
+              <button type="submit" class="btn btn-secondary btn-xs">Enregistrer</button>
+            </div>
+          </form>
+        </details>
       </div>
 
-      ${
-        dg.isSuspectedFraud && dg.fraudReasons?.length
-          ? `
-            <div class="fraud-reasons-alert">
-              <strong>🚨 Détails de l'alerte Anti-Fraude :</strong>
-              <ul>
-                ${dg.fraudReasons.map((r) => `<li>${escapeHtml(r)}</li>`).join("")}
-              </ul>
-            </div>
-          `
-          : ""
-      }
+      <!-- Analyse Anti-Fraude Multi-Dimensionnelle & Parcours Complet sur le Site -->
+      ${renderFraudAnalyticsPanel(dg.fraudAssessment, { openByDefault: dg.riskScore >= 40 })}
 
       <!-- Messages de la conversation -->
       <div class="admin-disc-messages-box" id="admin-disc-scroll">
@@ -559,16 +848,19 @@ class AdminController {
           .join("")}
       </div>
 
-      <!-- Réponses pré-rédigées en 1 clic + Envoi d'article ou code promo -->
+      <!-- Réponses rapides contextuelles selon les flags -->
       <div class="admin-quick-replies-row">
-        <button type="button" class="quick-prompt-chip sm" data-admin-quick="Bonjour ! Oui, cet abonnement est actuellement en stock avec livraison immédiate ici-même et par e-mail dès validation.">
-          ✓ En stock immédiat
+        <button type="button" class="quick-prompt-chip sm" data-admin-quick="Bonjour ! Oui, cet abonnement est en stock avec livraison immédiate dans votre coffre sécurisé et par e-mail dès validation.">
+          🛒 Conclure vente
         </button>
-        <button type="button" class="quick-prompt-chip sm" data-admin-quick="Rassurez-vous, votre argent est 100% protégé ! Je vérifie votre transaction immédiatement et je vous envoie vos accès d'ici quelques instants.">
-          🛡️ Rassurer &amp; vérifier paiement
+        <button type="button" class="quick-prompt-chip sm" data-admin-quick="Rassurez-vous, votre règlement est 100% suivi et sécurisé ! Je vérifie votre transaction immédiatement et vous livre vos accès dans quelques instants.">
+          😟 Rassurer client inquiet
         </button>
-        <button type="button" class="quick-prompt-chip sm" data-admin-quick="Je suis vraiment désolé pour l'attente ! Je m'occupe personnellement de votre demande en priorité tout de suite.">
-          🤝 Apaiser client agacé
+        <button type="button" class="quick-prompt-chip sm" data-admin-quick="Je suis vraiment désolé pour cette attente et je comprends parfaitement votre frustration. Je prends votre dossier en priorité absolue dès maintenant.">
+          🤬 Apaiser colère / agacement
+        </button>
+        <button type="button" class="quick-prompt-chip sm" data-admin-quick="Par mesure de sécurité anti-fraude, nous attendons la confirmation effective des fonds sur notre banque avant d'envoyer vos identifiants. Merci de nous préciser le nom exact du titulaire du compte émetteur.">
+          🚨 Vérification anti-fraude
         </button>
       </div>
 
@@ -599,13 +891,14 @@ class AdminController {
   }
 
   // ==========================================================================
-  // COMMANDES & LIVRAISON (AVEC ALERTES ANTI-FRAUDE INTÉGRÉES)
+  // COMMANDES & LIVRAISON (AVEC ANALYSE ANTI-FRAUDE 6D PAR COMMANDE)
   // ==========================================================================
   renderOrdersTab(orders, stats) {
     const filtered = orders.filter((o) => {
       if (this.orderFilter === "to_deliver") {
         return (o.paymentStatus === "paid" || o.paymentStatus === "declaration_sent") && o.deliveryStatus !== "delivered";
       }
+      if (this.orderFilter === "fraud_risk") return (o.riskScore || 0) >= 40;
       if (this.orderFilter === "delivered") return o.deliveryStatus === "delivered";
       return true;
     });
@@ -620,15 +913,16 @@ class AdminController {
           <span class="kpi-val">${stats.pendingDeliveries}</span>
           <span class="kpi-lbl">Commandes à livrer</span>
         </div>
-        <div class="kpi-box">
-          <span class="kpi-val">${stats.totalOrders}</span>
-          <span class="kpi-lbl">Total commandes</span>
+        <div class="kpi-box ${(stats.highRiskOrdersCount || 0) > 0 ? "danger-kpi" : ""}">
+          <span class="kpi-val">${stats.highRiskOrdersCount || 0}</span>
+          <span class="kpi-lbl">Commandes à risque (≥45)</span>
         </div>
       </div>
 
       <div class="admin-filter-pills">
         <button type="button" class="filter-pill ${this.orderFilter === "all" ? "active" : ""}" data-ord-filter="all">Toutes (${orders.length})</button>
         <button type="button" class="filter-pill ${this.orderFilter === "to_deliver" ? "active" : ""}" data-ord-filter="to_deliver">À vérifier / livrer (${stats.pendingDeliveries})</button>
+        <button type="button" class="filter-pill pill-filter-fraud ${this.orderFilter === "fraud_risk" ? "active" : ""}" data-ord-filter="fraud_risk">🚨 Risque Fraude (${stats.highRiskOrdersCount || 0})</button>
         <button type="button" class="filter-pill ${this.orderFilter === "delivered" ? "active" : ""}" data-ord-filter="delivered">Livrées</button>
       </div>
 
@@ -642,7 +936,9 @@ class AdminController {
                   const isPaid = ord.paymentStatus === "paid";
                   const isDeclared = ord.paymentStatus === "declaration_sent";
                   const isDelivered = ord.deliveryStatus === "delivered";
-                  const isFraudRisk = (ord.riskScore || 0) >= 40;
+                  const score = Number(ord.riskScore || 0);
+                  const isFraudRisk = score >= 45;
+                  const riskCls = getRiskMeterClass(score);
 
                   const payBadge = isPaid
                     ? `<span class="order-status-badge badge-paid">✓ Payé (${escapeHtml(ord.paymentMethod.toUpperCase())})</span>`
@@ -656,9 +952,10 @@ class AdminController {
                         <div>
                           <span class="order-badge-id">#${escapeHtml(ord.orderId)}</span>
                           <span class="order-date-text">${new Date(ord.createdAt).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                          ${ord.userId ? `<span class="acct-mini-tag logged" style="margin-left:0.4rem;">Compte</span>` : `<span class="acct-mini-tag" style="margin-left:0.4rem;">Invité</span>`}
                         </div>
-                        <div style="display:flex;gap:0.4rem;flex-wrap:wrap;">
-                          ${isFraudRisk ? `<span class="diag-badge diag-fraud">🚨 Suspecté de fraude (${ord.riskScore}/100)</span>` : ""}
+                        <div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;">
+                          <span class="fraud-score-pill ${riskCls}">Risque ${score}/100 (${getRiskLevelLabel(score)})</span>
                           ${payBadge}
                           <span class="order-status-badge ${isDelivered ? "badge-paid" : "badge-waiting"}">${isDelivered ? "📦 Livré" : "À envoyer"}</span>
                         </div>
@@ -674,13 +971,12 @@ class AdminController {
                         ${ord.paymentMethod === "sepa_instant" ? ` • Réf SEPA : <code>${escapeHtml(ord.sepaRef)}</code>` : ""}
                       </div>
 
-                      ${
-                        isFraudRisk && ord.fraudReasons?.length
-                          ? `<div class="fraud-reasons-alert" style="margin:0.25rem 0;"><strong>⚠️ Vigilance avant envoi des accès :</strong> ${ord.fraudReasons.map(escapeHtml).join(" • ")}</div>`
-                          : ""
-                      }
-
                       ${ord.notes ? `<div class="order-notes-box">Note client : ${escapeHtml(ord.notes)}</div>` : ""}
+
+                      ${renderFraudAnalyticsPanel(ord.fraudAssessment, {
+                        openByDefault: score >= 50,
+                        compactTitle: "🔬 Détail Anti-Fraude & Suivi Site de cette commande"
+                      })}
 
                       <div class="order-admin-actions">
                         <button type="button" class="btn btn-primary btn-xs" data-deliver-order="${escapeHtml(ord.orderId)}">
@@ -700,6 +996,190 @@ class AdminController {
             </div>
           `
       }
+    `;
+  }
+
+  // ==========================================================================
+  // NOUVEL ONGLET : CLIENTS, COMPTES & CENTRE ANTI-FRAUDE COMPORTEMENTAL
+  // ==========================================================================
+  renderCustomersAntiFraudTab(d) {
+    const customers = d.customers || [];
+    const visitors = d.trackedVisitors || [];
+    const s = d.stats || {};
+    const q = this.customerSearch.trim().toLowerCase();
+
+    const filteredCustomers = customers.filter((c) => {
+      if (q && !c.name.toLowerCase().includes(q) && !c.email.toLowerCase().includes(q)) return false;
+      if (this.customerFilter === "high_risk") return (c.fraudAssessment?.score || 0) >= 45;
+      if (this.customerFilter === "vip") return c.flagIds.includes("vip_loyal") || c.trustedOverride;
+      if (this.customerFilter === "suspended") return c.status === "suspended";
+      return true;
+    });
+
+    const isVisitorsView = this.customerFilter === "visitors";
+
+    return `
+      <div class="admin-kpi-row four-cols">
+        <div class="kpi-box">
+          <span class="kpi-val">${s.totalCustomers || 0}</span>
+          <span class="kpi-lbl">Comptes clients</span>
+        </div>
+        <div class="kpi-box">
+          <span class="kpi-val">${s.activeCustomerSessions || 0}</span>
+          <span class="kpi-lbl">Sessions actives</span>
+        </div>
+        <div class="kpi-box ${(s.highRiskCustomers || 0) > 0 ? "danger-kpi" : ""}">
+          <span class="kpi-val">${s.highRiskCustomers || 0}</span>
+          <span class="kpi-lbl">Comptes à risque (≥45)</span>
+        </div>
+        <div class="kpi-box">
+          <span class="kpi-val">${s.trackedVisitorsCount || 0}</span>
+          <span class="kpi-lbl">Visiteurs invités suivis</span>
+        </div>
+      </div>
+
+      <div class="customers-toolbar">
+        <div class="admin-filter-pills" style="margin-bottom:0;">
+          <button type="button" class="filter-pill ${this.customerFilter === "all" ? "active" : ""}" data-cust-filter="all">
+            Tous les comptes (${customers.length})
+          </button>
+          <button type="button" class="filter-pill pill-filter-fraud ${this.customerFilter === "high_risk" ? "active" : ""}" data-cust-filter="high_risk">
+            🚨 À risque (${customers.filter((c) => (c.fraudAssessment?.score || 0) >= 45).length})
+          </button>
+          <button type="button" class="filter-pill pill-filter-vip ${this.customerFilter === "vip" ? "active" : ""}" data-cust-filter="vip">
+            ⭐ VIP / Fiables (${customers.filter((c) => c.flagIds.includes("vip_loyal") || c.trustedOverride).length})
+          </button>
+          <button type="button" class="filter-pill ${this.customerFilter === "suspended" ? "active" : ""}" data-cust-filter="suspended">
+            🚫 Suspendus (${customers.filter((c) => c.status === "suspended").length})
+          </button>
+          <button type="button" class="filter-pill ${this.customerFilter === "visitors" ? "active" : ""}" data-cust-filter="visitors">
+            🧭 Visiteurs suivis (${visitors.length})
+          </button>
+        </div>
+
+        ${
+          !isVisitorsView
+            ? `
+            <search>
+              <label for="admin-cust-search" class="visually-hidden">Rechercher un client</label>
+              <input type="search" id="admin-cust-search" class="form-control form-control-sm" value="${escapeHtml(this.customerSearch)}" placeholder="Rechercher nom ou e-mail..." />
+            </search>
+          `
+            : ""
+        }
+      </div>
+
+      ${
+        isVisitorsView
+          ? this.renderTrackedVisitorsList(visitors)
+          : filteredCustomers.length === 0
+          ? `<div class="admin-empty-state"><p>Aucun compte client dans cette sélection.</p></div>`
+          : `
+            <div class="admin-orders-list" style="margin-top:0.85rem;">
+              ${filteredCustomers
+                .map((c) => {
+                  const score = Number(c.fraudAssessment?.score || 0);
+                  const riskCls = getRiskMeterClass(score);
+                  const isSuspended = c.status === "suspended";
+                  return `
+                    <div class="admin-order-card ${score >= 45 || isSuspended ? "fraud-border" : "confirmed"}">
+                      <div class="order-card-top">
+                        <div style="display:flex;align-items:center;gap:0.55rem;flex-wrap:wrap;">
+                          <strong style="font-size:1rem;">${escapeHtml(c.name)}</strong>
+                          <code>${escapeHtml(c.email)}</code>
+                          <span class="order-status-badge ${isSuspended ? "badge-suspended" : "badge-paid"}">
+                            ${isSuspended ? "🚫 Suspendu" : "✓ Actif"}
+                          </span>
+                        </div>
+                        <span class="fraud-score-pill ${riskCls}">
+                          Risque Global : <strong>${score}/100</strong> (${getRiskLevelLabel(score)} • Conf. ${c.fraudAssessment?.confidence || 0}%)
+                        </span>
+                      </div>
+
+                      <div class="order-items-inline">
+                        Inscrit le ${new Date(c.createdAt).toLocaleDateString("fr-FR")} •
+                        Commandes : <strong>${c.ordersCount}</strong> (${c.paidOrdersCount} payées • <strong>${c.totalSpent} €</strong>) •
+                        Discussions : <strong>${c.discussionsCount}</strong>
+                      </div>
+
+                      <div class="disc-diagnostic-badges">
+                        ${(c.flags || [])
+                          .map(
+                            (f) => `<span class="diag-badge ${escapeHtml(f.colorClass)}" title="${escapeHtml(f.reason || f.description)}">${f.icon} ${escapeHtml(f.label)}</span>`
+                          )
+                          .join("")}
+                      </div>
+
+                      ${renderFraudAnalyticsPanel(c.fraudAssessment, {
+                        openByDefault: score >= 45,
+                        compactTitle: "🔬 Profil Anti-Fraude (6 Dimensions) & Parcours Complet sur le Site"
+                      })}
+
+                      <form class="admin-private-note-form" data-customer-note="${escapeHtml(c.id)}">
+                        <div style="display:flex;gap:0.45rem;">
+                          <input type="text" name="adminNotes" class="form-control form-control-sm" value="${escapeHtml(c.adminNotes || "")}" placeholder="Note privée sur ce client (ex: client vérifié, à surveiller...)" />
+                          <button type="submit" class="btn btn-secondary btn-xs">Noter</button>
+                        </div>
+                      </form>
+
+                      <div class="order-admin-actions">
+                        <button type="button" class="btn btn-outline btn-xs ${c.trustedOverride ? "active-trust-btn" : ""}" data-cust-action="trust" data-cust-id="${escapeHtml(c.id)}" data-val="${!c.trustedOverride}">
+                          ${c.trustedOverride ? "🛡️ Whitelist Fiable ✓" : "🛡️ Marquer Client Fiable"}
+                        </button>
+                        <button type="button" class="btn btn-outline btn-xs" data-cust-action="flag-vip" data-cust-id="${escapeHtml(c.id)}" data-val="${!c.flagIds.includes("vip_loyal")}">
+                          ${c.flagIds.includes("vip_loyal") ? "Retirer VIP" : "⭐ Marquer VIP"}
+                        </button>
+                        <button type="button" class="btn btn-outline btn-xs" data-cust-action="status" data-cust-id="${escapeHtml(c.id)}" data-val="${isSuspended ? "active" : "suspended"}">
+                          ${isSuspended ? "▶️ Réactiver le compte" : "⏸️ Suspendre le compte"}
+                        </button>
+                        <button type="button" class="btn btn-outline btn-xs danger-btn" data-cust-action="block" data-cust-id="${escapeHtml(c.id)}" data-val="${!isSuspended}">
+                          ${isSuspended ? "Débloquer tout" : "🚫 Bloquer (Compte+IP+Appareil)"}
+                        </button>
+                      </div>
+                    </div>
+                  `;
+                })
+                .join("")}
+            </div>
+          `
+      }
+    `;
+  }
+
+  renderTrackedVisitorsList(visitors) {
+    if (!visitors.length) {
+      return `<div class="admin-empty-state" style="margin-top:0.85rem;"><p>Aucun visiteur anonyme enregistré pour le moment.</p></div>`;
+    }
+    return `
+      <div class="admin-orders-list" style="margin-top:0.85rem;">
+        ${visitors
+          .map((v) => {
+            const score = Number(v.fraudAssessment?.score || 0);
+            const riskCls = getRiskMeterClass(score);
+            return `
+              <div class="admin-order-card ${score >= 45 ? "fraud-border" : ""}">
+                <div class="order-card-top">
+                  <div>
+                    <strong>Visiteur <code>${escapeHtml(v.visitorId)}</code></strong>
+                    ${v.email ? ` • <code>${escapeHtml(v.email)}</code>` : ""}
+                    <span class="order-date-text">${escapeHtml(v.userAgentSummary || "")} • Vu ${new Date(v.lastSeenAt).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                  </div>
+                  <span class="fraud-score-pill ${riskCls}">Risque ${score}/100 (${getRiskLevelLabel(score)})</span>
+                </div>
+                ${renderFraudAnalyticsPanel(v.fraudAssessment, {
+                  openByDefault: score >= 35,
+                  compactTitle: "🧭 Détail du suivi comportemental sur le site"
+                })}
+                <div class="order-admin-actions">
+                  <button type="button" class="btn btn-outline btn-xs danger-btn" data-block-visitor="${escapeHtml(v.key)}">
+                    🚫 Bloquer cette connexion / empreinte appareil
+                  </button>
+                </div>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
     `;
   }
 
@@ -827,6 +1307,9 @@ class AdminController {
   // TÉLÉPHONE, PAIEMENTS & SÉCURITÉ ADMIN
   // ==========================================================================
   renderIntegrationsTab(s, ntfyInfo, adminInfo, securityInfo) {
+    const blockedEmails = securityInfo?.blockedEmails || [];
+    const secEvents = securityInfo?.recentEvents || [];
+
     return `
       <form id="admin-settings-master-form" class="admin-integrations-stack">
         <div class="integration-panel highlight-integration">
@@ -989,15 +1472,68 @@ class AdminController {
               <input type="password" id="cfg-admin-newpass" class="form-control" placeholder="Nouveau mot de passe fort" />
             </div>
           </div>
-          <p style="font-size:0.78rem;color:var(--text-muted);">
-            Clients bloqués par l'anti-fraude : <strong>${(securityInfo?.blockedEmails || []).length} e-mail(s)</strong> et <strong>${securityInfo?.blockedHashesCount || 0} empreinte(s) réseau</strong>.
-          </p>
         </div>
 
         <button type="submit" class="btn btn-primary" style="align-self:flex-start;">
           ✓ Enregistrer toute la configuration
         </button>
       </form>
+
+      <!-- Liste Noire & Journal de Sécurité Anti-Fraude -->
+      <div class="integration-panel" style="margin-top:1.15rem;">
+        <div class="integration-head-inline">
+          <h2>🛡️ Liste Noire Anti-Fraude &amp; Journal Sécurité</h2>
+          ${
+            (securityInfo?.blockedHashesCount || 0) + (securityInfo?.blockedFingerprintsCount || 0) > 0
+              ? `<button type="button" class="btn btn-outline btn-xs" id="btn-clear-blocked-hashes">Vider les empreintes bloquées (${(securityInfo?.blockedHashesCount || 0) + (securityInfo?.blockedFingerprintsCount || 0)})</button>`
+              : ""
+          }
+        </div>
+        <p style="font-size:0.8rem;color:var(--text-muted);">
+          Bloqués : <strong>${blockedEmails.length} e-mail(s)</strong> • <strong>${securityInfo?.blockedHashesCount || 0} réseau(x)</strong> • <strong>${securityInfo?.blockedFingerprintsCount || 0} appareil(s)</strong>
+        </p>
+        ${
+          blockedEmails.length > 0
+            ? `
+            <div style="display:flex;gap:0.45rem;flex-wrap:wrap;">
+              ${blockedEmails
+                .map(
+                  (em) => `
+                  <span class="diag-badge diag-fraud">
+                    🚫 ${escapeHtml(em)}
+                    <button type="button" class="flag-dismiss-x" data-unblock-email="${escapeHtml(em)}" aria-label="Débloquer ${escapeHtml(em)}">×</button>
+                  </span>
+                `
+                )
+                .join("")}
+            </div>
+          `
+            : ""
+        }
+        ${
+          secEvents.length > 0
+            ? `
+            <div class="journey-timeline" style="margin-top:0.5rem;">
+              <strong>Derniers événements de sécurité bloqués :</strong>
+              <ul>
+                ${secEvents
+                  .slice(0, 8)
+                  .map(
+                    (ev) => `
+                    <li>
+                      <span class="tl-time">${new Date(ev.createdAt).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                      <code class="tl-type">${escapeHtml(ev.type)}</code>
+                      <span class="tl-label">${escapeHtml(ev.email || ev.visitorKey || "")} ${ev.score ? `(Score ${ev.score}/100)` : ""}</span>
+                    </li>
+                  `
+                  )
+                  .join("")}
+              </ul>
+            </div>
+          `
+            : ""
+        }
+      </div>
     `;
   }
 
@@ -1054,7 +1590,6 @@ class AdminController {
   }
 
   bindActiveTabEvents(container) {
-    // Scroll Discussion messages to bottom
     const discScroll = container.querySelector("#admin-disc-scroll");
     if (discScroll) discScroll.scrollTop = discScroll.scrollHeight;
 
@@ -1079,30 +1614,65 @@ class AdminController {
       });
     });
 
-    // Manual Flags (Resolved, Fast Help, Annoyed, Fraud)
+    // Flags précis (toggle individuel, status, ou reset Auto)
     container.querySelectorAll("[data-flag-thread]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const tid = btn.getAttribute("data-flag-thread");
         const key = btn.getAttribute("data-flag-key");
+        const flagId = btn.getAttribute("data-flag-id");
         const rawVal = btn.getAttribute("data-flag-val");
-        const val = rawVal === "true" ? true : rawVal === "false" ? false : rawVal;
+        const val = rawVal === "true" ? true : rawVal === "false" ? false : rawVal === "auto" ? null : rawVal;
 
+        const payload = flagId ? { flagId, flagValue: val } : { [key]: val };
         await fetch(`/api/admin/discussions/${encodeURIComponent(tid)}/flags`, {
           method: "PATCH",
           headers: this.authHeaders(),
-          body: JSON.stringify({ [key]: val })
+          body: JSON.stringify(payload)
         });
         await this.refreshDashboardSilently();
         this.render();
       });
     });
 
-    // Block / Unblock suspicious client
+    // Note privée admin sur discussion
+    container.querySelectorAll("[data-note-thread]").forEach((form) => {
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const tid = form.getAttribute("data-note-thread");
+        const adminNotes = form.elements.adminNotes?.value || "";
+        await fetch(`/api/admin/discussions/${encodeURIComponent(tid)}/flags`, {
+          method: "PATCH",
+          headers: this.authHeaders(),
+          body: JSON.stringify({ adminNotes })
+        });
+        showToast("Note privée enregistrée.", "success");
+        await this.refreshDashboardSilently();
+        this.render();
+      });
+    });
+
+    // Whitelist Fiable depuis discussion
+    container.querySelectorAll("[data-trust-client]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const tid = btn.getAttribute("data-trust-client");
+        const val = btn.getAttribute("data-trust-val") === "true";
+        await fetch(`/api/admin/discussions/${encodeURIComponent(tid)}/flags`, {
+          method: "PATCH",
+          headers: this.authHeaders(),
+          body: JSON.stringify({ trustClient: val })
+        });
+        showToast(val ? "Client marqué comme fiable (Whitelist)." : "Whitelist retirée.", "info");
+        await this.refreshDashboardSilently();
+        this.render();
+      });
+    });
+
+    // Block / Unblock client depuis discussion
     container.querySelectorAll("[data-block-client]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const tid = btn.getAttribute("data-block-client");
         const shouldBlock = btn.getAttribute("data-block-val") === "true";
-        if (shouldBlock && !confirm("Bloquer cet e-mail et cette connexion réseau contre toute nouvelle commande ?")) {
+        if (shouldBlock && !confirm("Bloquer cet e-mail, cette connexion réseau, cet appareil et suspendre le compte associé ?")) {
           return;
         }
         await fetch(`/api/admin/discussions/${encodeURIComponent(tid)}/flags`, {
@@ -1130,7 +1700,6 @@ class AdminController {
       });
     });
 
-    // Quick Pre-written Replies
     container.querySelectorAll("[data-admin-quick]").forEach((chip) => {
       chip.addEventListener("click", () => {
         const inp = container.querySelector("#admin-disc-reply-input");
@@ -1141,7 +1710,6 @@ class AdminController {
       });
     });
 
-    // Reply in Admin Discussion
     container.querySelector("#admin-disc-reply-form")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const form = e.currentTarget;
@@ -1167,6 +1735,106 @@ class AdminController {
       } else {
         showToast("Erreur lors de l'envoi de la réponse.", "error");
       }
+    });
+
+    // Clients & Anti-Fraude events
+    container.querySelectorAll("[data-cust-filter]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this.customerFilter = btn.getAttribute("data-cust-filter");
+        this.render();
+      });
+    });
+
+    container.querySelector("#admin-cust-search")?.addEventListener("input", (e) => {
+      this.customerSearch = e.target.value || "";
+      this.render();
+      const inp = document.getElementById("admin-cust-search");
+      if (inp) {
+        inp.focus();
+        inp.setSelectionRange(inp.value.length, inp.value.length);
+      }
+    });
+
+    container.querySelectorAll("[data-customer-note]").forEach((form) => {
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const uid = form.getAttribute("data-customer-note");
+        const adminNotes = form.elements.adminNotes?.value || "";
+        await fetch(`/api/admin/customers/${encodeURIComponent(uid)}`, {
+          method: "PATCH",
+          headers: this.authHeaders(),
+          body: JSON.stringify({ adminNotes })
+        });
+        showToast("Note client enregistrée.", "success");
+        await this.refreshDashboardSilently();
+        this.render();
+      });
+    });
+
+    container.querySelectorAll("[data-cust-action]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const uid = btn.getAttribute("data-cust-id");
+        const action = btn.getAttribute("data-cust-action");
+        const rawVal = btn.getAttribute("data-val");
+        let payload = {};
+        if (action === "trust") payload = { trustedOverride: rawVal === "true" };
+        else if (action === "flag-vip") payload = { flagId: "vip_loyal", flagValue: rawVal === "true" };
+        else if (action === "status") payload = { status: rawVal };
+        else if (action === "block") {
+          const shouldBlock = rawVal === "true";
+          if (shouldBlock && !confirm("Suspendre ce compte et bloquer son e-mail, réseau et appareil ?")) return;
+          payload = { blockClient: shouldBlock };
+        }
+        await fetch(`/api/admin/customers/${encodeURIComponent(uid)}`, {
+          method: "PATCH",
+          headers: this.authHeaders(),
+          body: JSON.stringify(payload)
+        });
+        showToast("Statut client mis à jour.", "success");
+        await this.refreshDashboardSilently();
+        this.render();
+      });
+    });
+
+    container.querySelectorAll("[data-block-visitor]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const key = btn.getAttribute("data-block-visitor");
+        if (!confirm("Bloquer définitivement la connexion et l'appareil de ce visiteur ?")) return;
+        await fetch(`/api/admin/visitors/${encodeURIComponent(key)}/block`, {
+          method: "POST",
+          headers: this.authHeaders()
+        });
+        showToast("Visiteur bloqué par l'anti-fraude.", "info");
+        await this.refreshDashboardSilently();
+        this.render();
+      });
+    });
+
+    // Security unblock actions
+    container.querySelectorAll("[data-unblock-email]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const email = btn.getAttribute("data-unblock-email");
+        await fetch("/api/admin/security/unblock", {
+          method: "POST",
+          headers: this.authHeaders(),
+          body: JSON.stringify({ email })
+        });
+        showToast(`${email} débloqué.`, "info");
+        await this.refreshDashboardSilently();
+        this.render();
+      });
+    });
+
+    container.querySelector("#btn-clear-blocked-hashes")?.addEventListener("click", async () => {
+      if (!confirm("Réinitialiser toutes les empreintes réseau et appareil bloquées ?")) return;
+      await fetch("/api/admin/security/unblock", {
+        method: "POST",
+        headers: this.authHeaders(),
+        body: JSON.stringify({ clearAllHashes: true })
+      });
+      showToast("Empreintes bloquées effacées.", "info");
+      await this.refreshDashboardSilently();
+      this.render();
     });
 
     // Catalog events
@@ -1418,11 +2086,10 @@ class AdminController {
       <div class="admin-deliver-grid">
         <form id="admin-deliver-access-form" class="deliver-form-col">
           <h2>1. Accès à remettre au client</h2>
-          ${
-            (order.riskScore || 0) >= 40
-              ? `<div class="fraud-reasons-alert"><strong>🚨 Attention — Risque Fraude (${order.riskScore}/100) :</strong> Vérifiez bien que les fonds sont crédités sur votre compte avant d'envoyer ces identifiants ! (${(order.fraudReasons || []).map(escapeHtml).join(" • ")})</div>`
-              : ""
-          }
+          ${renderFraudAnalyticsPanel(order.fraudAssessment, {
+            openByDefault: (order.riskScore || 0) >= 40,
+            compactTitle: "🔬 Vérification Anti-Fraude avant livraison"
+          })}
           ${order.notes ? `<div class="order-notes-box">📌 Précision client : <strong>${escapeHtml(order.notes)}</strong></div>` : ""}
 
           ${order.items

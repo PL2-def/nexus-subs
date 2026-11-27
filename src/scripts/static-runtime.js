@@ -684,6 +684,92 @@ function installStaticApiInterceptor() {
       return jsonResponse({ ok: true });
     }
 
+    // 6b. Telemetry & Customer Auth en mode autonome (GitHub Pages / hors-ligne)
+    if (path === "/api/telemetry/events" && method === "POST") {
+      return jsonResponse({ ok: true });
+    }
+
+    if (path.startsWith("/api/auth/")) {
+      db.users = Array.isArray(db.users) ? db.users : [];
+      const curId = sessionStorage.getItem("nexus_static_user_id") || "";
+      const curUser = curId ? db.users.find((u) => u.id === curId) : null;
+
+      if (path === "/api/auth/me" && method === "GET") {
+        if (!curUser) return jsonResponse({ authenticated: false, user: null });
+        const orders = (db.orders || []).filter((o) => o.email === curUser.email);
+        const discussions = (db.discussions || []).filter((t) => t.customerEmail === curUser.email);
+        return jsonResponse({
+          authenticated: true,
+          user: { id: curUser.id, name: curUser.name, email: curUser.email, createdAt: curUser.createdAt, status: "active", securityLog: curUser.securityLog || [] },
+          csrfToken: "static-csrf-token",
+          sessions: [{ id: "sess_local", userAgentSummary: "Session locale navigateur", lastSeenAt: new Date().toISOString(), isCurrent: true }],
+          orders,
+          discussions
+        });
+      }
+      if (path === "/api/auth/register" && method === "POST") {
+        const cleanEmail = String(body.email || "").trim().toLowerCase();
+        const cleanName = String(body.fullName || "").trim();
+        if (!cleanName || !cleanEmail.includes("@") || String(body.password || "").length < 10) {
+          return jsonResponse({ error: "Nom, e-mail valide et mot de passe de 10 caractères minimum requis." }, 400);
+        }
+        if (db.users.some((u) => u.email === cleanEmail)) {
+          return jsonResponse({ error: "Un compte existe déjà avec cette adresse e-mail." }, 409);
+        }
+        const nowIso = new Date().toISOString();
+        const hashBuf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${cleanEmail}:${body.password}`));
+        const pwHash = Array.from(new Uint8Array(hashBuf), (b) => b.toString(16).padStart(2, "0")).join("");
+        const user = {
+          id: `usr_${Date.now()}`,
+          name: cleanName,
+          email: cleanEmail,
+          pwHash,
+          createdAt: nowIso,
+          securityLog: [{ id: "l1", action: "Création du compte (local)", detail: "Session locale", at: nowIso }]
+        };
+        db.users.unshift(user);
+        saveStaticDb(db);
+        sessionStorage.setItem("nexus_static_user_id", user.id);
+        return jsonResponse({
+          authenticated: true,
+          user: { id: user.id, name: user.name, email: user.email, createdAt: user.createdAt, status: "active", securityLog: user.securityLog },
+          csrfToken: "static-csrf-token",
+          sessions: [{ id: "sess_local", userAgentSummary: "Session locale navigateur", lastSeenAt: nowIso, isCurrent: true }],
+          orders: (db.orders || []).filter((o) => o.email === cleanEmail),
+          discussions: (db.discussions || []).filter((t) => t.customerEmail === cleanEmail)
+        }, 201);
+      }
+      if (path === "/api/auth/login" && method === "POST") {
+        const cleanEmail = String(body.email || "").trim().toLowerCase();
+        const hashBuf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${cleanEmail}:${body.password || ""}`));
+        const pwHash = Array.from(new Uint8Array(hashBuf), (b) => b.toString(16).padStart(2, "0")).join("");
+        const user = db.users.find((u) => u.email === cleanEmail && u.pwHash === pwHash);
+        if (!user) return jsonResponse({ error: "Adresse e-mail ou mot de passe incorrect." }, 401);
+        sessionStorage.setItem("nexus_static_user_id", user.id);
+        return jsonResponse({
+          authenticated: true,
+          user: { id: user.id, name: user.name, email: user.email, createdAt: user.createdAt, status: "active", securityLog: user.securityLog || [] },
+          csrfToken: "static-csrf-token",
+          sessions: [{ id: "sess_local", userAgentSummary: "Session locale navigateur", lastSeenAt: new Date().toISOString(), isCurrent: true }],
+          orders: (db.orders || []).filter((o) => o.email === cleanEmail),
+          discussions: (db.discussions || []).filter((t) => t.customerEmail === cleanEmail)
+        });
+      }
+      if (path === "/api/auth/logout" && method === "POST") {
+        sessionStorage.removeItem("nexus_static_user_id");
+        return jsonResponse({ ok: true });
+      }
+      if (path === "/api/auth/profile" && method === "PATCH" && curUser) {
+        curUser.name = String(body.fullName || curUser.name).trim();
+        saveStaticDb(db);
+        return jsonResponse({ user: { id: curUser.id, name: curUser.name, email: curUser.email, createdAt: curUser.createdAt, status: "active", securityLog: curUser.securityLog || [] } });
+      }
+      if (path === "/api/auth/forgot-password" && method === "POST") {
+        return jsonResponse({ ok: true, smtpConfigured: false, message: "Mode hors-ligne : contactez le support via la Discussion en direct." });
+      }
+      return jsonResponse({ ok: true, sessions: [{ id: "sess_local", userAgentSummary: "Session locale navigateur", lastSeenAt: new Date().toISOString(), isCurrent: true }] });
+    }
+
     // 7. Admin Auth & Dashboard désactivés hors-ligne (authentification serveur obligatoire)
     if (path === "/api/admin/login" || path.startsWith("/api/admin/")) {
       return jsonResponse({ error: "Connexion administrateur indisponible hors-ligne : serveur requis." }, 503);

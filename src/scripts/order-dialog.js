@@ -8,6 +8,8 @@
 import { store } from "./store.js";
 import { closeDialogSmoothly, showToast, playChime, escapeHtml } from "./mwg-helpers.js";
 import { downloadOrderRescueProof, enqueueOfflineDeclaration } from "./guide-and-rescue.js";
+import { siteTracker } from "./site-tracker.js";
+import { account } from "./account.js";
 
 let activeEventSource = null;
 let currentOrderState = null;
@@ -25,6 +27,25 @@ function cleanupOrderStream() {
   secretsRevealed = false;
 }
 
+function getMergedCustomerOrders() {
+  const savedLocal = store.getSavedCustomerOrders();
+  const acctOrders = account.authenticated && Array.isArray(account.orders) ? account.orders : [];
+  const mergedMap = new Map();
+  for (const o of acctOrders) {
+    mergedMap.set(o.orderId, {
+      orderId: o.orderId,
+      accessToken: o.accessToken,
+      email: o.email,
+      total: o.total,
+      fromAccount: true
+    });
+  }
+  for (const s of savedLocal) {
+    if (!mergedMap.has(s.orderId)) mergedMap.set(s.orderId, s);
+  }
+  return Array.from(mergedMap.values());
+}
+
 export function initOrderTrackerModal() {
   const dialog = document.getElementById("order-live-dialog");
   if (!dialog) return;
@@ -32,7 +53,7 @@ export function initOrderTrackerModal() {
   dialog.addEventListener("close", () => cleanupOrderStream());
 
   window.openOrderTracker = () => {
-    const saved = store.getSavedCustomerOrders();
+    const saved = getMergedCustomerOrders();
     if (saved.length > 0) {
       openLiveOrderDialog({ orderId: saved[0].orderId, accessToken: saved[0].accessToken });
     } else {
@@ -48,7 +69,7 @@ export function renderOrderLookupView() {
   const container = document.getElementById("order-live-dialog-content");
   if (!dialog || !container) return;
 
-  const saved = store.getSavedCustomerOrders();
+  const saved = getMergedCustomerOrders();
 
   container.innerHTML = `
     <div class="checkout-header">
@@ -143,13 +164,16 @@ export function renderOrderLookupView() {
     e.preventDefault();
     const orderId = container.querySelector("#lookup-order-id").value.trim();
     const email = container.querySelector("#lookup-order-email").value.trim();
+    const meta = siteTracker.getPayloadMeta();
     try {
       const resp = await fetch("/api/orders/lookup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId, email })
+        credentials: "same-origin",
+        body: JSON.stringify({ orderId, email, visitorId: meta.visitorId, deviceFingerprint: meta.deviceFingerprint })
       });
       const data = await resp.json();
+      siteTracker.track("order_lookup_attempt", orderId, { ok: resp.ok });
       if (!resp.ok) throw new Error(data.error || "Commande introuvable.");
 
       store.saveCustomerOrderRef({

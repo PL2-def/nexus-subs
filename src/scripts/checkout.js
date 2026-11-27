@@ -1,9 +1,12 @@
 import { store } from "./store.js";
 import { closeDialogSmoothly, showToast, escapeHtml } from "./mwg-helpers.js";
 import { openLiveOrderDialog } from "./order-dialog.js";
+import { account } from "./account.js";
+import { siteTracker } from "./site-tracker.js";
 
 let selectedGateway = "stripe";
 let checkoutOpenedAtMs = 0;
+let checkoutSubmitted = false;
 
 function pickDefaultGateway() {
   const p = store.payments;
@@ -17,6 +20,13 @@ export function initCheckoutModal() {
   const dialog = document.getElementById("checkout-dialog");
   if (!dialog) return;
 
+  dialog.addEventListener("close", () => {
+    if (checkoutOpenedAtMs > 0 && !checkoutSubmitted) {
+      siteTracker.track("checkout_abandon", "Fermeture sans validation");
+    }
+    checkoutOpenedAtMs = 0;
+  });
+
   window.openCheckoutModal = () => {
     const summary = store.getCartSummary();
     if (summary.isEmpty) {
@@ -25,6 +35,8 @@ export function initCheckoutModal() {
     }
     selectedGateway = pickDefaultGateway();
     checkoutOpenedAtMs = Date.now();
+    checkoutSubmitted = false;
+    siteTracker.track("checkout_open", `${summary.total} € (${summary.itemCount} art.)`);
     renderCheckoutForm();
     if (!dialog.open) dialog.showModal();
   };
@@ -91,6 +103,21 @@ function renderCheckoutForm() {
             <h2 class="checkout-section-title">Vos coordonnées de réception confidentielles</h2>
           </div>
 
+          ${
+            account.authenticated && account.user
+              ? `
+                <div class="checkout-account-banner connected">
+                  <span>✅ Connecté en tant que <strong>${escapeHtml(account.user.name)}</strong> (${escapeHtml(account.user.email)}) — cette commande sera automatiquement liée à votre espace compte.</span>
+                </div>
+              `
+              : `
+                <div class="checkout-account-banner">
+                  <span>💡 Vous avez déjà un compte NEXUS ?</span>
+                  <button type="button" class="inline-legal-btn" id="btn-checkout-signin">Se connecter / Créer un compte</button>
+                </div>
+              `
+          }
+
           <div class="form-row">
             <div class="form-group">
               <label for="checkout-name" class="form-label">Prénom &amp; Nom *</label>
@@ -100,6 +127,7 @@ function renderCheckoutForm() {
                 name="name"
                 class="form-control"
                 placeholder="Thomas Martin"
+                value="${escapeHtml(account.authenticated && account.user ? account.user.name : "")}"
                 autocomplete="name"
                 autofocus
                 required
@@ -119,6 +147,7 @@ function renderCheckoutForm() {
                 name="email"
                 class="form-control"
                 placeholder="vous@exemple.fr"
+                value="${escapeHtml(account.authenticated && account.user ? account.user.email : "")}"
                 autocomplete="email"
                 aria-describedby="checkout-email-hint"
                 required
@@ -278,8 +307,16 @@ function renderCheckoutForm() {
     btn.addEventListener("click", () => window.openLegalModal?.(btn.getAttribute("data-open-legal")));
   });
 
+  container.querySelector("#btn-checkout-signin")?.addEventListener("click", async () => {
+    await closeDialogSmoothly(dialog);
+    account.openModal("login");
+  });
+
   container.querySelectorAll('input[name="paymentMethod"]').forEach((radio) => {
     radio.addEventListener("change", () => {
+      if (selectedGateway !== radio.value) {
+        siteTracker.track("payment_method_switch", `${selectedGateway} → ${radio.value}`);
+      }
       selectedGateway = radio.value;
       container.querySelectorAll(".payment-method-card").forEach((card) => {
         card.classList.toggle("active", card.getAttribute("data-gateway-card") === selectedGateway);
@@ -324,12 +361,14 @@ function renderCheckoutForm() {
         notes: container.querySelector("#checkout-notes")?.value.trim() || "",
         paymentMethod: selectedGateway,
         honeypot: container.querySelector("#checkout-hp-field")?.value || "",
-        formFillMs: checkoutOpenedAtMs ? Date.now() - checkoutOpenedAtMs : 5000
+        formFillMs: checkoutOpenedAtMs ? Date.now() - checkoutOpenedAtMs : 5000,
+        ...siteTracker.getPayloadMeta()
       };
 
       const resp = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify(payload)
       });
       const data = await resp.json();
@@ -338,6 +377,7 @@ function renderCheckoutForm() {
         throw new Error(data.error || "Impossible de créer la commande.");
       }
 
+      checkoutSubmitted = true;
       store.saveCustomerOrderRef({
         orderId: data.order.orderId,
         accessToken: data.accessToken,
@@ -345,6 +385,10 @@ function renderCheckoutForm() {
         total: data.order.total,
         createdAt: data.order.createdAt
       });
+
+      if (account.authenticated) {
+        account.fetchSession({ silent: true });
+      }
 
       store.clearCart();
       await closeDialogSmoothly(dialog);

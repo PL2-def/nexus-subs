@@ -2,6 +2,8 @@
  * État réactif central de la boutique (Catalogue temps réel, Panier, Commandes client mémorisées)
  */
 
+import { siteTracker } from "./site-tracker.js";
+
 const CART_KEY = "nexus_cart_v2";
 const COUPON_KEY = "nexus_coupon_v2";
 const MY_ORDERS_KEY = "nexus_my_orders_v2";
@@ -194,6 +196,7 @@ class AppStore {
     }
 
     this.emit();
+    siteTracker.track("cart_add", product.title, { ok: true });
     return { ok: true, product, message: `${product.title} ajouté au panier.` };
   }
 
@@ -207,6 +210,7 @@ class AppStore {
       this.cartItems.push({ id: product.id, quantity: 1 });
       this.emit();
     }
+    siteTracker.track("cart_add", `Achat direct: ${product.title}`, { ok: true });
     return { ok: true, product };
   }
 
@@ -225,7 +229,9 @@ class AppStore {
   }
 
   removeFromCart(productId) {
+    const product = this.getProductById(productId);
     this.cartItems = this.cartItems.filter((i) => i.id !== productId);
+    siteTracker.track("cart_remove", product?.title || productId);
     this.emit();
   }
 
@@ -237,12 +243,20 @@ class AppStore {
 
   async applyCouponCode(rawCode) {
     const summary = this.getCartSummary();
+    const meta = siteTracker.getPayloadMeta();
     const resp = await fetch("/api/coupons/validate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: rawCode, subtotal: summary.subtotal })
+      credentials: "same-origin",
+      body: JSON.stringify({
+        code: rawCode,
+        subtotal: summary.subtotal,
+        visitorId: meta.visitorId,
+        deviceFingerprint: meta.deviceFingerprint
+      })
     });
     const data = await resp.json();
+    siteTracker.track("coupon_attempt", String(rawCode || "").slice(0, 24), { ok: Boolean(resp.ok && data.valid) });
     if (!resp.ok || !data.valid) {
       return { ok: false, message: data.message || "Code promo invalide." };
     }

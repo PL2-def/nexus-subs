@@ -7,6 +7,8 @@
 
 import { store } from "./store.js";
 import { closeDialogSmoothly, showToast, playChime, escapeHtml } from "./mwg-helpers.js";
+import { account } from "./account.js";
+import { siteTracker } from "./site-tracker.js";
 
 const SAVED_THREAD_KEY = "nexus_customer_discussion_v1";
 
@@ -145,6 +147,7 @@ export async function openCustomerDiscussion({ productId = null, topic = null, r
   }
 
   renderDiscussionDialog();
+  siteTracker.track("discussion_open", selectedTopic);
   if (!dialog.open) dialog.showModal();
 }
 
@@ -257,7 +260,7 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
             id="disc-customer-name"
             class="form-control form-control-sm"
             placeholder="Votre prénom (ex: Léa)"
-            value="${escapeHtml(draftName !== undefined ? draftName : activeThread?.customerName && activeThread.customerName !== "Visiteur" ? activeThread.customerName : "")}"
+            value="${escapeHtml(draftName !== undefined ? draftName : activeThread?.customerName && activeThread.customerName !== "Visiteur" ? activeThread.customerName : account.authenticated && account.user ? account.user.name : "")}"
           />
         </div>
         <div class="form-group">
@@ -267,7 +270,7 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
             id="disc-customer-email"
             class="form-control form-control-sm"
             placeholder="Votre e-mail (facultatif, pour suivi mail)"
-            value="${escapeHtml(draftEmail !== undefined ? draftEmail : activeThread?.customerEmail || "")}"
+            value="${escapeHtml(draftEmail !== undefined ? draftEmail : activeThread?.customerEmail || (account.authenticated && account.user ? account.user.email : ""))}"
           />
         </div>
       </div>
@@ -466,22 +469,26 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
         const resp = await fetch("/api/discussions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
           body: JSON.stringify({
             customerName,
             customerEmail,
             topicType: selectedTopic === "rescue" ? "rescue" : prod ? "product" : "general",
             productId: prod ? prod.id : "",
             initialMessage: text,
-            honeypot
+            honeypot,
+            ...siteTracker.getPayloadMeta()
           })
         });
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.error || "Envoi impossible.");
 
+        siteTracker.track("message_sent", selectedTopic, { ok: true });
         activeThread = data.thread;
         activeToken = data.threadToken;
         saveThreadRef(activeThread.threadId, activeToken);
         connectDiscussionStream(activeThread.threadId, activeToken);
+        if (account.authenticated) account.fetchSession({ silent: true });
         renderDiscussionDialog();
       } else {
         // Mettre à jour nom/email si renseignés entre-temps

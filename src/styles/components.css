@@ -3812,3 +3812,969 @@ dialog[open].modal-container {
   grid-template-columns: 1fr 1fr;
   gap: 0.5rem;
 }
+
+
+/* ==========================================================================
+   v4 Additions : Menu Compte Client (Modern Web Guidance Popover Menu),
+   Modale Compte Sécurisée, Flags Précis Admin & Visualisation Anti-Fraude 6D
+   ========================================================================== */
+
+.account-menu-anchor-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.btn-header-account {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: 40px;
+  padding: 0 0.85rem;
+  border-radius: var(--radius-sm);
+  background: rgba(124, 58, 237, 0.14);
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  color: #fff;
+  font-size: 0.86rem;
+  font-weight: 700;
+  transition: all var(--transition-fast);
+}
+
+.btn-header-account:hover,
+.btn-header-account[aria-expanded="true"] {
+  background: rgba(124, 58, 237, 0.28);
+  border-color: var(--accent-purple-light);
+}
+
+.btn-header-account.account-trigger-logged {
+  background: rgba(16, 185, 129, 0.14);
+  border-color: rgba(16, 185, 129, 0.45);
+  padding-inline-start: 0.45rem;
+}
+
+.account-avatar-chip {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-purple), var(--accent-cyan));
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.account-chevron {
+  font-size: 0.72rem;
+  opacity: 0.8;
+}
+
+/* Popup Menu Compte (Modern Web Guidance: menu + Anchor Positioning + Popover fallback) */
+.account-menu-popover {
+  min-width: 255px;
+  max-width: min(310px, calc(100vw - 1.5rem));
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 0.45rem;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+@supports not selector(:popover-open) {
+  .account-menu-popover:not(.\:popover-open) {
+    display: none;
+  }
+}
+
+.account-menu-popover:is(:popover-open, .\:popover-open) {
+  display: block;
+}
+
+@supports (position-area: block-end) {
+  [popover]:has(> [focusgroup~="menu"]) {
+    position-area: block-end span-inline-start;
+    position-try-fallbacks: flip-inline, flip-block, flip-block flip-inline;
+    inset: auto;
+    margin-block-start: 0.45rem;
+  }
+}
+
+@supports not (position-area: block-end) {
+  .account-menu-popover {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    z-index: 400;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [popover]:has(> [focusgroup~="menu"]) {
+    opacity: 0;
+    transition: opacity, translate, display, overlay;
+    transition-duration: 0.14s;
+    transition-behavior: allow-discrete;
+  }
+  @supports selector(:popover-open) {
+    [popover]:has(> [focusgroup~="menu"]) {
+      translate: 0 -0.25rem;
+    }
+    [popover]:has(> [focusgroup~="menu"]):popover-open {
+      opacity: 1;
+      translate: 0 0;
+      transition-duration: 0.1s;
+      @starting-style {
+        opacity: 0;
+        translate: 0 -0.25rem;
+      }
+    }
+  }
+}
+
+.account-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.account-menu-list > button {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: left;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.account-menu-list > button:hover,
+.account-menu-list > button:focus {
+  background: rgba(124, 58, 237, 0.18);
+  color: #fff;
+}
+
+.account-menu-list > button.menu-item-danger {
+  color: #fca5a5;
+}
+
+.account-menu-list > button.menu-item-danger:hover,
+.account-menu-list > button.menu-item-danger:focus {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fff;
+}
+
+.account-menu-list .menu-item-ico {
+  width: 1.25rem;
+  flex: none;
+  text-align: center;
+}
+
+.account-menu-list .hint {
+  margin-inline-start: auto;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--accent-cyan-light);
+}
+
+.account-menu-list > hr {
+  border: 0;
+  border-top: 1px solid var(--border-light);
+  margin: 0.35rem 0.25rem;
+}
+
+.account-menu-user-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.5rem 0.65rem;
+}
+
+.account-menu-avatar-lg {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-purple), var(--accent-blue));
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.account-menu-user-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.account-menu-user-text strong {
+  font-size: 0.88rem;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-menu-user-text span {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Modale Compte Client (#account-dialog) */
+.account-modal-container {
+  max-width: 680px;
+}
+
+.account-auth-tabs {
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.55rem 1.5rem 0;
+  background: rgba(0, 0, 0, 0.28);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.account-auth-tab {
+  padding: 0.7rem 1rem;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.account-auth-tab:hover {
+  color: #fff;
+}
+
+.account-auth-tab.active {
+  color: #fff;
+  border-bottom-color: var(--accent-purple-light);
+}
+
+.account-modal-body {
+  padding: 1.45rem 1.65rem 1.65rem;
+  overflow-y: auto;
+  max-height: 72vh;
+}
+
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.account-form .form-control {
+  font-size: max(1rem, 1em);
+  min-height: 48px;
+}
+
+.label-with-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.password-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-input-wrap .form-control {
+  padding-inline-end: 3rem;
+  width: 100%;
+}
+
+.btn-toggle-password {
+  position: absolute;
+  inset-inline-end: 0.45rem;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  color: var(--text-muted);
+}
+
+.btn-toggle-password:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.pw-strength-box {
+  margin-top: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.pw-strength-track {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.pw-strength-bar {
+  height: 100%;
+  width: 0%;
+  transition: width 180ms ease, background 180ms ease;
+}
+
+.pw-strength-bar.level-weak {
+  background: #ef4444;
+}
+
+.pw-strength-bar.level-medium {
+  background: #f59e0b;
+}
+
+.pw-strength-bar.level-strong {
+  background: #10b981;
+}
+
+.pw-strength-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.pw-checks-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.pw-check-chip {
+  font-size: 0.7rem;
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-subtle);
+}
+
+.pw-check-chip.ok {
+  background: rgba(16, 185, 129, 0.16);
+  color: #6ee7b7;
+}
+
+.auth-error-banner {
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #fecaca;
+  border-radius: var(--radius-sm);
+  padding: 0.7rem 0.9rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.auth-switch-hint {
+  text-align: center;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+.account-security-footnote {
+  margin-top: 1.15rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border-light);
+  font-size: 0.74rem;
+  color: var(--text-subtle);
+  text-align: center;
+}
+
+.account-orders-list,
+.account-sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 0.5rem;
+}
+
+.account-order-row,
+.account-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 0.8rem 1rem;
+}
+
+.account-security-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.account-sec-card {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.account-sec-card h2 {
+  font-size: 0.95rem;
+}
+
+.account-seclog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  font-size: 0.79rem;
+}
+
+.account-seclog-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px dashed var(--border-light);
+}
+
+.checkout-account-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  background: rgba(124, 58, 237, 0.1);
+  border: 1px solid rgba(167, 139, 250, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.85rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.9rem;
+}
+
+.checkout-account-banner.connected {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.35);
+  color: #a7f3d0;
+}
+
+/* ==========================================================================
+   Admin v4 : Flags Précis Colorés, Sélecteur de Flags & Panneau Anti-Fraude 6D
+   ========================================================================== */
+
+.acct-mini-tag {
+  font-size: 0.66rem;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+}
+
+.acct-mini-tag.logged {
+  background: rgba(16, 185, 129, 0.16);
+  color: #6ee7b7;
+}
+
+.risk-chip-mini {
+  font-size: 0.69rem;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  font-family: var(--font-family-mono);
+}
+
+.fraud-score-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 0.22rem 0.65rem;
+  border-radius: var(--radius-full);
+}
+
+.risk-low {
+  background: rgba(16, 185, 129, 0.16);
+  color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.risk-moderate {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fcd34d;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.risk-elevated {
+  background: rgba(249, 115, 22, 0.2);
+  color: #fdba74;
+  border: 1px solid rgba(249, 115, 22, 0.5);
+}
+
+.risk-critical {
+  background: rgba(239, 68, 68, 0.24);
+  color: #fecaca;
+  border: 1px solid rgba(239, 68, 68, 0.65);
+}
+
+/* Couleurs des nouveaux flags précis */
+.diag-fraud-critical {
+  background: rgba(220, 38, 38, 0.3);
+  color: #fee2e2;
+  border: 1px solid rgba(239, 68, 68, 0.8);
+}
+
+.diag-watch {
+  background: rgba(234, 179, 8, 0.18);
+  color: #fef08a;
+  border: 1px solid rgba(234, 179, 8, 0.45);
+}
+
+.diag-furious {
+  background: rgba(190, 18, 60, 0.3);
+  color: #ffe4e6;
+  border: 1px solid rgba(244, 63, 94, 0.75);
+}
+
+.diag-anxious {
+  background: rgba(14, 165, 233, 0.2);
+  color: #bae6fd;
+  border: 1px solid rgba(56, 189, 248, 0.5);
+}
+
+.diag-confused {
+  background: rgba(139, 92, 246, 0.2);
+  color: #ddd6fe;
+  border: 1px solid rgba(167, 139, 250, 0.45);
+}
+
+.diag-positive {
+  background: rgba(16, 185, 129, 0.18);
+  color: #a7f3d0;
+  border: 1px solid rgba(16, 185, 129, 0.45);
+}
+
+.diag-rescue {
+  background: rgba(225, 29, 72, 0.26);
+  color: #fecdd3;
+  border: 1px solid rgba(244, 63, 94, 0.65);
+}
+
+.diag-tech {
+  background: rgba(6, 182, 212, 0.2);
+  color: #a5f3fc;
+  border: 1px solid rgba(34, 211, 238, 0.45);
+}
+
+.diag-vip {
+  background: rgba(234, 179, 8, 0.2);
+  color: #fef08a;
+  border: 1px solid rgba(250, 204, 21, 0.55);
+}
+
+.diag-ready {
+  background: rgba(34, 197, 94, 0.2);
+  color: #bbf7d0;
+  border: 1px solid rgba(74, 222, 128, 0.5);
+}
+
+.diag-verified {
+  background: rgba(59, 130, 246, 0.18);
+  color: #bfdbfe;
+  border: 1px solid rgba(96, 165, 250, 0.45);
+}
+
+.pill-filter-anxious:not(.active) {
+  color: #7dd3fc;
+  background: rgba(14, 165, 233, 0.12);
+}
+
+.pill-filter-ready:not(.active) {
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.pill-filter-vip:not(.active) {
+  color: #fde047;
+  background: rgba(234, 179, 8, 0.12);
+}
+
+.diag-badge-interactive {
+  padding-inline-end: 0.35rem;
+}
+
+.flag-src-tag {
+  font-style: normal;
+  font-size: 0.6rem;
+  opacity: 0.72;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.flag-dismiss-x {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.8;
+}
+
+.flag-dismiss-x:hover {
+  background: rgba(0, 0, 0, 0.35);
+  opacity: 1;
+}
+
+.active-trust-btn {
+  border-color: rgba(16, 185, 129, 0.65) !important;
+  background: rgba(16, 185, 129, 0.16) !important;
+  color: #6ee7b7 !important;
+}
+
+.admin-flag-picker-details {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+}
+
+.admin-flag-picker-details summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.flag-picker-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 0.65rem;
+}
+
+.flag-picker-cat {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  margin-bottom: 0.3rem;
+}
+
+.flag-picker-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.flag-toggle-pill {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.22rem 0.55rem;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-light);
+  color: var(--text-muted);
+  transition: all var(--transition-fast);
+}
+
+.flag-toggle-pill:hover {
+  border-color: var(--accent-purple-light);
+  color: #fff;
+}
+
+.flag-toggle-pill.is-on {
+  background: rgba(124, 58, 237, 0.28);
+  border-color: var(--accent-purple-light);
+  color: #fff;
+}
+
+.flag-reset-auto {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--accent-cyan-light);
+}
+
+.admin-private-note-form {
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px dashed var(--border-light);
+}
+
+/* Panneau d'Analyse Anti-Fraude 6 Dimensions & Parcours Site */
+.admin-fraud-details {
+  background: rgba(10, 14, 26, 0.75);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.admin-fraud-details.risk-critical {
+  border-color: rgba(239, 68, 68, 0.6);
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.admin-fraud-details.risk-elevated {
+  border-color: rgba(249, 115, 22, 0.5);
+  background: rgba(249, 115, 22, 0.05);
+}
+
+.admin-fraud-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0.85rem;
+  font-size: 0.81rem;
+  font-weight: 700;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.admin-fraud-panel-body {
+  padding: 0.75rem 0.9rem 0.9rem;
+  border-top: 1px solid var(--border-light);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.fraud-reco-banner {
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-xs);
+  font-size: 0.79rem;
+}
+
+.fraud-dims-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.55rem 0.85rem;
+}
+
+.fraud-dim-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+}
+
+.fraud-dim-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.fraud-dim-track {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.fraud-dim-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  border: none !important;
+}
+
+.fraud-dim-fill.risk-low { background: #10b981; }
+.fraud-dim-fill.risk-moderate { background: #f59e0b; }
+.fraud-dim-fill.risk-elevated { background: #f97316; }
+.fraud-dim-fill.risk-critical { background: #ef4444; }
+
+.trust-bonus-val {
+  color: #6ee7b7;
+}
+
+.fraud-signals-block h3,
+.site-journey-block h3 {
+  font-size: 0.79rem;
+  margin-bottom: 0.4rem;
+  color: var(--text-secondary);
+}
+
+.fraud-signals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.fraud-signal-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.76rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-xs);
+  padding: 0.4rem 0.55rem;
+}
+
+.fraud-signal-item strong {
+  display: block;
+  color: #fff;
+}
+
+.fraud-signal-item span {
+  color: var(--text-muted);
+}
+
+.signal-weight-tag {
+  font-family: var(--font-family-mono);
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.22);
+  color: #fecaca;
+  flex-shrink: 0;
+}
+
+.signal-weight-tag.positive {
+  background: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+}
+
+.journey-kpis-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+}
+
+.journey-kpi {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-xs);
+  padding: 0.38rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.journey-kpi.kpi-warn {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.journey-kpi span {
+  font-size: 0.67rem;
+  color: var(--text-muted);
+}
+
+.journey-kpi strong {
+  font-size: 0.78rem;
+  color: #fff;
+}
+
+.journey-meta-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.meta-mini-chip {
+  font-size: 0.7rem;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+}
+
+.meta-mini-chip.warn {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fcd34d;
+}
+
+.meta-mini-chip.danger {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fecaca;
+}
+
+.journey-timeline {
+  margin-top: 0.55rem;
+  font-size: 0.74rem;
+}
+
+.journey-timeline ul {
+  margin-top: 0.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+}
+
+.journey-timeline li {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  color: var(--text-secondary);
+}
+
+.tl-time {
+  font-family: var(--font-family-mono);
+  font-size: 0.68rem;
+  color: var(--text-subtle);
+}
+
+.tl-type {
+  font-size: 0.68rem;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(124, 58, 237, 0.18);
+  color: var(--accent-purple-light);
+}
+
+.admin-kpi-row.four-cols {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.kpi-box.danger-kpi {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.customers-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.badge-suspended {
+  background: rgba(239, 68, 68, 0.2) !important;
+  color: #fecaca !important;
+}

@@ -1,6 +1,8 @@
 import { initStaticRuntimeIfNeeded } from "./static-runtime.js";
 import { store } from "./store.js";
 import { initAllDialogs, initFormValidationAria, showToast } from "./mwg-helpers.js";
+import { siteTracker } from "./site-tracker.js";
+import { account } from "./account.js";
 import { renderProductGrid, openProductDetail, openCartDrawer, closeCartDrawer, renderCartDrawer } from "./ui.js";
 import { initCheckoutModal, handlePaymentReturnQuery } from "./checkout.js";
 import { initOrderTrackerModal } from "./order-dialog.js";
@@ -11,14 +13,30 @@ import { admin } from "./admin.js";
 
 document.addEventListener("DOMContentLoaded", async () => {
   await initStaticRuntimeIfNeeded();
+  siteTracker.init();
   initAllDialogs();
   initFormValidationAria();
+  await account.init();
   initCheckoutModal();
   initOrderTrackerModal();
   setupLegalModal();
   initGuideAndRescue();
   await initCustomerDiscussionWidget();
   admin.init();
+
+  const syncSupportPrefill = () => {
+    const sName = document.getElementById("support-name");
+    const sEmail = document.getElementById("support-email");
+    if (account.authenticated && account.user) {
+      if (sName && !sName.value) sName.value = account.user.name || "";
+      if (sEmail && !sEmail.value) sEmail.value = account.user.email || "";
+    }
+  };
+  syncSupportPrefill();
+  account.subscribe(() => {
+    syncSupportPrefill();
+    store.updateHeaderOrderDot();
+  });
 
   store.subscribe(() => {
     renderProductGrid();
@@ -124,6 +142,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (id) openCustomerDiscussion({ productId: id });
         break;
 
+      case "open-account":
+        closeMobileMenu();
+        account.openModal();
+        break;
+
       case "open-discussion":
         closeMobileMenu();
         openCustomerDiscussion();
@@ -195,12 +218,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     const payload = {
       name: document.getElementById("support-name").value.trim(),
       email: document.getElementById("support-email").value.trim(),
-      message: document.getElementById("support-message").value.trim()
+      message: document.getElementById("support-message").value.trim(),
+      ...siteTracker.getPayloadMeta()
     };
     try {
       const resp = await fetch("/api/support", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify(payload)
       });
       const data = await resp.json();

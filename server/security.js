@@ -162,6 +162,181 @@ export function createRollingBackupIfDue(dbFilePath) {
 /**
  * En-têtes HTTP de sécurité & de confidentialité
  */
+export function isHttpsRequest(req) {
+  const xfProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim().toLowerCase();
+  return Boolean(req.secure || xfProto === "https");
+}
+
+export function getSessionCookieName(req) {
+  return isHttpsRequest(req) ? "__Host-nexus_sid" : "nexus_sid";
+}
+
+export function parseCookies(req) {
+  const raw = String(req.headers.cookie || "");
+  const out = {};
+  if (!raw) return out;
+  for (const part of raw.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    const key = part.slice(0, eq).trim();
+    const val = part.slice(eq + 1).trim();
+    if (!key) continue;
+    try {
+      out[key] = decodeURIComponent(val);
+    } catch {
+      out[key] = val;
+    }
+  }
+  return out;
+}
+
+export function setSessionCookie(req, res, rawToken, maxAgeSec = 60 * 60 * 24 * 7) {
+  const https = isHttpsRequest(req);
+  const name = getSessionCookieName(req);
+  const parts = [
+    `${name}=${encodeURIComponent(rawToken)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${Math.max(60, Math.floor(maxAgeSec))}`
+  ];
+  if (https) parts.push("Secure");
+  res.append("Set-Cookie", parts.join("; "));
+}
+
+export function clearSessionCookie(req, res) {
+  const https = isHttpsRequest(req);
+  const expired = "Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/; HttpOnly; SameSite=Lax";
+  res.append("Set-Cookie", `nexus_sid=; ${expired}`);
+  if (https) {
+    res.append("Set-Cookie", `__Host-nexus_sid=; ${expired}; Secure`);
+  }
+}
+
+export function sendClearSiteDataHeader(res) {
+  res.setHeader("Clear-Site-Data", '"cookies", "storage", "cache"');
+}
+
+export function hashToken(rawToken) {
+  return crypto.createHash("sha256").update(String(rawToken || "")).digest("hex");
+}
+
+export function canonicalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+/**
+ * Clé canonique anti-alias (détecte les variantes Gmail john.doe+1@gmail.com === johndoe@gmail.com)
+ */
+export function getCanonicalEmailKey(email) {
+  const clean = canonicalizeEmail(email);
+  const at = clean.indexOf("@");
+  if (at <= 0) return clean;
+  let local = clean.slice(0, at);
+  let domain = clean.slice(at + 1);
+  if (domain === "googlemail.com") domain = "gmail.com";
+  const plusIdx = local.indexOf("+");
+  if (plusIdx > 0) local = local.slice(0, plusIdx);
+  if (domain === "gmail.com") {
+    local = local.replace(/\./g, "");
+  }
+  return `${local}@${domain}`;
+}
+
+const COMMON_WEAK_PASSWORDS = new Set([
+  "password",
+  "password123",
+  "password1234",
+  "1234567890",
+  "123456789",
+  "12345678",
+  "azerty123",
+  "azerty1234",
+  "azertyuiop",
+  "qwerty123",
+  "qwerty1234",
+  "qwertyuiop",
+  "motdepasse",
+  "motdepasse123",
+  "admin1234",
+  "welcome123",
+  "bonjour123",
+  "nexus12345",
+  "nexussubs1",
+  "iloveyou123",
+  "0000000000",
+  "aaaaaaaaaa"
+]);
+
+export function validatePasswordStrength(password, email = "", fullName = "") {
+  const raw = typeof password === "string" ? password : "";
+  const issues = [];
+  if (raw.length < 10) issues.push("Au moins 10 caractères requis");
+  if (raw.length > 128) issues.push("Maximum 128 caractères autorisés");
+
+  const hasLower = /[a-z]/.test(raw);
+  const hasUpper = /[A-Z]/.test(raw);
+  const hasDigit = /\d/.test(raw);
+  const hasSymbol = /[^A-Za-z0-9]/.test(raw);
+  const classes = [hasLower, hasUpper, hasDigit, hasSymbol].filter(Boolean).length;
+
+  if (raw.length < 14 && classes < 3) {
+    issues.push("Combinez au moins 3 types : minuscules, majuscules, chiffres, symboles");
+  } else if (raw.length >= 14 && classes < 2) {
+    issues.push("Ajoutez des chiffres, majuscules ou symboles");
+  }
+
+  const lower = raw.toLowerCase().trim();
+  if (COMMON_WEAK_PASSWORDS.has(lower) || /^(.)\1{5,}$/.test(raw)) {
+    issues.push("Ce mot de passe est trop courant ou répétitif");
+  }
+
+  const emailLocal = canonicalizeEmail(email).split("@")[0] || "";
+  if (emailLocal.length >= 4 && lower.includes(emailLocal)) {
+    issues.push("Le mot de passe ne doit pas contenir votre adresse e-mail");
+  }
+  const cleanName = String(fullName || "").trim().toLowerCase();
+  if (cleanName.length >= 4 && lower.includes(cleanName)) {
+    issues.push("Le mot de passe ne doit pas contenir votre nom");
+  }
+
+  let score = 0;
+  if (raw.length >= 10) score += 25;
+  if (raw.length >= 14) score += 20;
+  if (raw.length >= 18) score += 10;
+  score += classes * 11;
+  if (issues.length > 0) score = Math.min(score, 45);
+  score = Math.max(0, Math.min(100, score));
+
+  const level = score >= 80 ? "strong" : score >= 55 ? "medium" : "weak";
+  return {
+    valid: issues.length === 0,
+    score,
+    level,
+    issues
+  };
+}
+
+export function summarizeUserAgent(ua = "") {
+  const s = String(ua || "");
+  if (!s) return "Navigateur inconnu";
+  let browser = "Navigateur";
+  if (/Edg\//i.test(s)) browser = "Edge";
+  else if (/OPR\//i.test(s)) browser = "Opera";
+  else if (/Chrome\//i.test(s) && !/Chromium/i.test(s)) browser = "Chrome";
+  else if (/Firefox\//i.test(s)) browser = "Firefox";
+  else if (/Safari\//i.test(s)) browser = "Safari";
+
+  let os = "Appareil";
+  if (/iPhone|iPad|iPod/i.test(s)) os = "iOS";
+  else if (/Android/i.test(s)) os = "Android";
+  else if (/Windows/i.test(s)) os = "Windows";
+  else if (/Mac OS X|Macintosh/i.test(s)) os = "macOS";
+  else if (/Linux/i.test(s)) os = "Linux";
+
+  return `${browser} • ${os}`;
+}
+
 export function securityHeadersMiddleware(req, res, next) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
@@ -174,6 +349,9 @@ export function securityHeadersMiddleware(req, res, next) {
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
   res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
   res.setHeader("Vary", "Sec-Fetch-Dest, Sec-Fetch-Mode, Sec-Fetch-Site");
+  if (isHttpsRequest(req)) {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
 
   // Protection Fetch Metadata contre les requêtes cross-site malveillantes (hors webhooks externes)
   if (!req.path.startsWith("/api/webhooks/")) {
@@ -249,4 +427,56 @@ export function recordAdminLoginFailure(ipHash) {
 
 export function clearAdminLoginFailures(ipHash) {
   adminLoginAttempts.delete(ipHash);
+}
+
+/**
+ * Protection Brute-Force progressive pour les comptes Clients (par clé IP + e-mail)
+ */
+const customerLoginAttempts = new Map(); // key -> { count, lockedUntil, lastFailAt }
+
+export function checkCustomerLoginAllowed(key) {
+  const entry = customerLoginAttempts.get(key);
+  if (!entry) return { allowed: true, attempts: 0 };
+  if (entry.lockedUntil && Date.now() < entry.lockedUntil) {
+    const waitSec = Math.ceil((entry.lockedUntil - Date.now()) / 1000);
+    const waitMin = Math.ceil(waitSec / 60);
+    return {
+      allowed: false,
+      waitSec,
+      waitMin,
+      attempts: entry.count,
+      message:
+        waitSec < 60
+          ? `Trop de tentatives. Veuillez patienter ${waitSec}s avant de réessayer.`
+          : `Accès temporairement verrouillé par sécurité. Réessayez dans ${waitMin} min.`
+    };
+  }
+  if (entry.lockedUntil && Date.now() >= entry.lockedUntil) {
+    entry.lockedUntil = 0;
+  }
+  // Reset si pas d'échec depuis 45 min
+  if (entry.lastFailAt && Date.now() - entry.lastFailAt > 45 * 60 * 1000) {
+    customerLoginAttempts.delete(key);
+    return { allowed: true, attempts: 0 };
+  }
+  return { allowed: true, attempts: entry.count };
+}
+
+export function recordCustomerLoginFailure(key) {
+  const entry = customerLoginAttempts.get(key) || { count: 0, lockedUntil: 0, lastFailAt: 0 };
+  entry.count += 1;
+  entry.lastFailAt = Date.now();
+  if (entry.count >= 12) {
+    entry.lockedUntil = Date.now() + 60 * 60 * 1000; // 60 min
+  } else if (entry.count >= 8) {
+    entry.lockedUntil = Date.now() + 15 * 60 * 1000; // 15 min
+  } else if (entry.count >= 5) {
+    entry.lockedUntil = Date.now() + 5 * 60 * 1000; // 5 min
+  }
+  customerLoginAttempts.set(key, entry);
+  return entry;
+}
+
+export function clearCustomerLoginFailures(key) {
+  customerLoginAttempts.delete(key);
 }

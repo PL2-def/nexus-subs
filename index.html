@@ -107,6 +107,45 @@
             <span class="orders-btn-label">Mes Accès</span>
           </button>
 
+          <!-- Menu Compte Client (Modern Web Guidance: commandfor + popover + focusgroup="menu nomemory") -->
+          <div class="account-menu-anchor-wrap">
+            <button
+              type="button"
+              id="account-menu-trigger"
+              class="btn-header-account"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              commandfor="account-menu-popover"
+              command="toggle-popover"
+              aria-label="Menu compte client : connexion ou inscription"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" aria-hidden="true">
+                <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+              </svg>
+              <span class="account-btn-label">Compte</span>
+              <span class="account-chevron" aria-hidden="true">▾</span>
+            </button>
+            <!-- Immédiatement après son trigger (aucun aria-details implicite) -->
+            <div id="account-menu-popover" popover="auto" class="account-menu-popover">
+              <div id="account-menu-items" focusgroup="menu nomemory" aria-labelledby="account-menu-trigger" class="account-menu-list">
+                <button type="button" data-account-menu-action="login">
+                  <span class="menu-item-ico" aria-hidden="true">🔑</span>
+                  <span>Se connecter</span>
+                </button>
+                <button type="button" data-account-menu-action="register">
+                  <span class="menu-item-ico" aria-hidden="true">✨</span>
+                  <span>Créer un compte sécurisé</span>
+                </button>
+                <hr />
+                <button type="button" data-account-menu-action="guest-orders">
+                  <span class="menu-item-ico" aria-hidden="true">📦</span>
+                  <span>Suivre une commande invité</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
           <!-- Panier -->
           <button
             type="button"
@@ -154,6 +193,9 @@
       </div>
 
       <div class="mobile-nav-links">
+        <button type="button" id="mobile-account-btn" class="mobile-nav-link" data-action="open-account">
+          🔑 Se connecter / Créer un compte
+        </button>
         <a href="#products" class="mobile-nav-link">Nos Abonnements 12 Mois</a>
         <a href="#guide" class="mobile-nav-link">📘 Instructions d'Achat &amp; d'Activation</a>
         <button type="button" class="mobile-nav-link" data-action="open-discussion">
@@ -642,6 +684,7 @@
           <div class="footer-col">
             <h3 class="footer-col-title">Espace Client</h3>
             <ul class="footer-links-list">
+              <li><button type="button" data-action="open-account">Mon compte / Connexion</button></li>
               <li><a href="#products">Catalogue des offres</a></li>
               <li><a href="#guide">Instructions d'achat &amp; d'activation</a></li>
               <li><button type="button" data-action="open-discussion">Discussion en direct</button></li>
@@ -757,6 +800,10 @@
 
     <dialog id="legal-dialog" class="modal-container legal-modal-container" aria-labelledby="legal-dialog-title" closedby="any">
       <div id="legal-dialog-content"></div>
+    </dialog>
+
+    <dialog id="account-dialog" class="modal-container account-modal-container" aria-labelledby="account-dialog-title" closedby="any">
+      <div id="account-dialog-content"></div>
     </dialog>
 
     <dialog id="admin-dialog" class="modal-container admin-modal-container" aria-labelledby="admin-dialog-title" closedby="any">

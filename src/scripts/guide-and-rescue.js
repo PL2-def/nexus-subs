@@ -4,8 +4,10 @@
  * + File d'attente hors-ligne (Offline Retry Queue)
  */
 
-import { closeDialogSmoothly, showToast } from "./mwg-helpers.js";
+import { closeDialogSmoothly, showToast, escapeHtml } from "./mwg-helpers.js";
 import { openCustomerDiscussion } from "./discussion-widget.js";
+import { account } from "./account.js";
+import { siteTracker } from "./site-tracker.js";
 
 const OFFLINE_QUEUE_KEY = "nexus_offline_rescue_queue_v1";
 
@@ -204,11 +206,11 @@ function renderRescueModalContent(prefillOrderRef = "") {
         <div class="form-row">
           <div class="form-group">
             <label for="rescue-name" class="form-label">Votre nom ou prénom *</label>
-            <input type="text" id="rescue-name" class="form-control" placeholder="Ex : Thomas Martin" required autofocus />
+            <input type="text" id="rescue-name" class="form-control" value="${escapeHtml(account.authenticated && account.user ? account.user.name : "")}" placeholder="Ex : Thomas Martin" required autofocus />
           </div>
           <div class="form-group">
             <label for="rescue-email" class="form-label">Votre bonne adresse e-mail où recevoir vos accès *</label>
-            <input type="email" id="rescue-email" class="form-control" placeholder="vous@exemple.fr" required />
+            <input type="email" id="rescue-email" class="form-control" value="${escapeHtml(account.authenticated && account.user ? account.user.email : "")}" placeholder="vous@exemple.fr" required />
           </div>
         </div>
 
@@ -268,16 +270,19 @@ function renderRescueModalContent(prefillOrderRef = "") {
         amountPaid: container.querySelector("#rescue-amount").value.trim(),
         orderRef: container.querySelector("#rescue-order-ref").value.trim(),
         paymentProof: container.querySelector("#rescue-proof").value.trim(),
-        problemDetails: container.querySelector("#rescue-details").value.trim()
+        problemDetails: container.querySelector("#rescue-details").value.trim(),
+        ...siteTracker.getPayloadMeta()
       };
 
       const resp = await fetch("/api/rescue-claim", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify(payload)
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || "Erreur lors de l'envoi.");
+      siteTracker.track("rescue_submit", payload.amountPaid || "SOS", { ok: true });
 
       await closeDialogSmoothly(dialog);
       showToast("Dossier de secours enregistré ! Le vendeur est alerté en urgence.", "success", 6000);

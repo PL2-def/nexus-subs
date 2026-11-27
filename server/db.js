@@ -7,7 +7,9 @@ import {
   decryptText,
   encryptObject,
   decryptObject,
-  createRollingBackupIfDue
+  createRollingBackupIfDue,
+  hashToken,
+  summarizeUserAgent
 } from "./security.js";
 import { scheduleRemoteSync } from "./remote-store.js";
 
@@ -15,17 +17,28 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.resolve(__dirname, "..", "data");
 const DB_FILE = path.join(DATA_DIR, "nexus-store.json");
 
+const DUMMY_SALT = "00112233445566778899aabbccddeeff";
+const DUMMY_HASH = crypto.scryptSync("nexus-timing-equalization-dummy", DUMMY_SALT, 64).toString("hex");
+
 export function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
   const hash = crypto.scryptSync(String(password), salt, 64).toString("hex");
   return { salt, hash };
 }
 
 export function verifyPassword(password, salt, expectedHash) {
-  if (!salt || !expectedHash) return false;
+  if (!salt || !expectedHash) {
+    // Calcul factice anti-timing-attack même si le compte n'existe pas
+    crypto.scryptSync(String(password || ""), DUMMY_SALT, 64);
+    return false;
+  }
   const actual = crypto.scryptSync(String(password), salt, 64);
   const expected = Buffer.from(expectedHash, "hex");
   if (actual.length !== expected.length) return false;
   return crypto.timingSafeEqual(actual, expected);
+}
+
+export function dummyPasswordCheck(password = "") {
+  return verifyPassword(password, DUMMY_SALT, DUMMY_HASH);
 }
 
 const DEFAULT_PRODUCTS = [
@@ -227,7 +240,7 @@ function createDefaultStore() {
   const randomTopicSuffix = crypto.randomBytes(5).toString("hex");
 
   return {
-    version: 3,
+    version: 4,
     admin: {
       name: "Gasc Enzo",
       email: process.env.ADMIN_EMAIL || "subpassdelivrey@gmail.com",
@@ -237,8 +250,14 @@ function createDefaultStore() {
     security: {
       blockedEmails: [],
       blockedHashes: [],
+      blockedFingerprints: [],
+      trustedEmails: [],
+      trustedUserIds: [],
       securityEvents: []
     },
+    users: [],
+    userSessions: [],
+    visitorProfiles: {},
     settings: {
       storeName: "NEXUS SUBS",
       supportEmail: "subpassdelivrey@gmail.com",
@@ -385,8 +404,24 @@ class StoreDB {
         this.data = {
           ...defaults,
           ...parsed,
+          version: 4,
           admin: { ...defaults.admin, ...(parsed.admin || {}) },
-          security: { ...defaults.security, ...(parsed.security || {}) },
+          security: {
+            ...defaults.security,
+            ...(parsed.security || {}),
+            blockedEmails: Array.isArray(parsed.security?.blockedEmails) ? parsed.security.blockedEmails : [],
+            blockedHashes: Array.isArray(parsed.security?.blockedHashes) ? parsed.security.blockedHashes : [],
+            blockedFingerprints: Array.isArray(parsed.security?.blockedFingerprints) ? parsed.security.blockedFingerprints : [],
+            trustedEmails: Array.isArray(parsed.security?.trustedEmails) ? parsed.security.trustedEmails : [],
+            trustedUserIds: Array.isArray(parsed.security?.trustedUserIds) ? parsed.security.trustedUserIds : [],
+            securityEvents: Array.isArray(parsed.security?.securityEvents) ? parsed.security.securityEvents : []
+          },
+          users: Array.isArray(parsed.users) ? parsed.users : [],
+          userSessions: Array.isArray(parsed.userSessions) ? parsed.userSessions : [],
+          visitorProfiles:
+            parsed.visitorProfiles && typeof parsed.visitorProfiles === "object" && !Array.isArray(parsed.visitorProfiles)
+              ? parsed.visitorProfiles
+              : {},
           discussions: Array.isArray(parsed.discussions) ? parsed.discussions : [],
           rescueClaims: Array.isArray(parsed.rescueClaims) ? parsed.rescueClaims : [],
           settings: {
@@ -449,6 +484,145 @@ class StoreDB {
 
   revokeAdminSession(token) {
     if (token) this.sessions.delete(token);
+  }
+
+  // ============================================================================
+  // Gestion sécurisée des sessions comptes clients (Tokens hachés SHA-256 + CSRF)
+  // ============================================================================
+  pruneExpiredUserSessions() {
+    const now = Date.now();
+    const before = this.data.userSessions.length;
+    this.data.userSessions = this.data.userSessions.filter((s) => s && s.expiresAt > now);
+    return this.data.userSessions.length !== before;
+  }
+
+  createUserSession(user, { clientHash = "", deviceFingerprint = "", userAgent = "", rememberDays = 7 } = {}) {
+    this.pruneExpiredUserSessions();
+    const rawToken = crypto.randomBytes(32).toString("base64url");
+    const tokenHash = hashToken(rawToken);
+    const csrfToken = crypto.randomBytes(24).toString("base64url");
+    const now = Date.now();
+    const ttlMs = Math.max(1, Math.min(30, rememberDays)) * 24 * 60 * 60 * 1000;
+    const session = {
+      id: `sess_${now}_${crypto.randomBytes(4).toString("hex")}`,
+      tokenHash,
+      csrfToken,
+      userId: user.id,
+      clientHash,
+      deviceFingerprint: String(deviceFingerprint || "").slice(0, 64),
+      userAgentSummary: summarizeUserAgent(userAgent),
+      createdAt: new Date(now).toISOString(),
+      lastSeenAt: new Date(now).toISOString(),
+      expiresAt: now + ttlMs
+    };
+
+    // Maximum 5 sessions actives par compte (éviction des plus anciennes)
+    const userSessions = this.data.userSessions
+      .filter((s) => s.userId === user.id)
+      .sort((a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime());
+    if (userSessions.length >= 5) {
+      const toRemove = new Set(userSessions.slice(4).map((s) => s.id));
+      this.data.userSessions = this.data.userSessions.filter((s) => !toRemove.has(s.id));
+    }
+
+    this.data.userSessions.unshift(session);
+    this.save();
+    return { rawToken, session };
+  }
+
+  verifyUserSession(rawToken) {
+    if (!rawToken || typeof rawToken !== "string") return null;
+    const tokenHash = hashToken(rawToken);
+    const now = Date.now();
+    const session = this.data.userSessions.find((s) => s.tokenHash === tokenHash);
+    if (!session) return null;
+    if (session.expiresAt <= now) {
+      this.data.userSessions = this.data.userSessions.filter((s) => s.id !== session.id);
+      this.save();
+      return null;
+    }
+    const user = this.data.users.find((u) => u.id === session.userId);
+    if (!user || user.status === "suspended") {
+      return null;
+    }
+    const lastMs = new Date(session.lastSeenAt || session.createdAt).getTime();
+    if (now - lastMs > 2 * 60 * 1000) {
+      session.lastSeenAt = new Date(now).toISOString();
+      this.save();
+    }
+    return { session, user };
+  }
+
+  revokeUserSessionByToken(rawToken) {
+    if (!rawToken) return false;
+    const tokenHash = hashToken(rawToken);
+    const before = this.data.userSessions.length;
+    this.data.userSessions = this.data.userSessions.filter((s) => s.tokenHash !== tokenHash);
+    if (this.data.userSessions.length !== before) {
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  revokeUserSessionById(userId, sessionId) {
+    const before = this.data.userSessions.length;
+    this.data.userSessions = this.data.userSessions.filter((s) => !(s.userId === userId && s.id === sessionId));
+    if (this.data.userSessions.length !== before) {
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  revokeAllUserSessions(userId, exceptSessionId = null) {
+    const before = this.data.userSessions.length;
+    this.data.userSessions = this.data.userSessions.filter(
+      (s) => s.userId !== userId || (exceptSessionId && s.id === exceptSessionId)
+    );
+    if (this.data.userSessions.length !== before) {
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  getUserActiveSessions(userId, currentSessionId = null) {
+    this.pruneExpiredUserSessions();
+    return this.data.userSessions
+      .filter((s) => s.userId === userId)
+      .sort((a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime())
+      .map((s) => ({
+        id: s.id,
+        userAgentSummary: s.userAgentSummary,
+        createdAt: s.createdAt,
+        lastSeenAt: s.lastSeenAt,
+        expiresAt: new Date(s.expiresAt).toISOString(),
+        isCurrent: Boolean(currentSessionId && s.id === currentSessionId)
+      }));
+  }
+
+  recordSecurityEvent(event) {
+    this.data.security = this.data.security || {};
+    this.data.security.securityEvents = this.data.security.securityEvents || [];
+    this.data.security.securityEvents.unshift({
+      id: `sec_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`,
+      createdAt: new Date().toISOString(),
+      ...event
+    });
+    this.data.security.securityEvents = this.data.security.securityEvents.slice(0, 250);
+  }
+
+  pruneVisitorProfiles() {
+    const profiles = this.data.visitorProfiles || {};
+    const keys = Object.keys(profiles);
+    if (keys.length <= 350) return;
+    const sorted = keys
+      .map((k) => ({ k, ts: new Date(profiles[k]?.lastSeenAt || 0).getTime() }))
+      .sort((a, b) => b.ts - a.ts);
+    for (const item of sorted.slice(300)) {
+      delete profiles[item.k];
+    }
   }
 
   addNotification({ type = "system", title, message, orderId = null, threadId = null, meta = null }) {
