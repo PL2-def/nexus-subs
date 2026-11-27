@@ -53,6 +53,7 @@ import {
   capturePayPalOrder
 } from "./payments.js";
 import {
+  extractRawClientIp,
   extractRequestTrace,
   generateDossierIdentifiers,
   appendOrderTraceEvent,
@@ -230,6 +231,7 @@ function sanitizeThreadForCustomer(thread) {
   const {
     threadToken,
     clientHash,
+    ipAddress,
     deviceFingerprint,
     visitorId,
     riskScore,
@@ -758,8 +760,15 @@ app.post("/api/auth/register", authRegisterLimiter, async (req, res) => {
     } = req.body || {};
 
     const clientHash = getPrivacyClientHash(req);
+    const { ipAddress: regIp } = extractRawClientIp(req);
     const uaSummary = summarizeUserAgent(req.headers["user-agent"] || "");
     const cleanEmail = canonicalizeEmail(email);
+
+    if (regIp && (db.data.security?.blockedIps || []).includes(regIp)) {
+      return res.status(403).json({
+        error: "Création de compte refusée par notre protection de sécurité."
+      });
+    }
 
     if (honeypot && String(honeypot).trim() !== "") {
       db.recordSecurityEvent({ type: "register_honeypot", email: cleanEmail, clientHash });
@@ -937,8 +946,15 @@ app.post("/api/auth/login", authLoginLimiter, async (req, res) => {
     } = req.body || {};
 
     const clientHash = getPrivacyClientHash(req);
+    const { ipAddress: regIp } = extractRawClientIp(req);
     const uaSummary = summarizeUserAgent(req.headers["user-agent"] || "");
     const cleanEmail = canonicalizeEmail(email);
+
+    if (regIp && (db.data.security?.blockedIps || []).includes(regIp)) {
+      return res.status(403).json({
+        error: "Connexion refusée par notre protection de sécurité."
+      });
+    }
     const rawPass = typeof password === "string" ? password : "";
 
     if (!cleanEmail || !rawPass) {
@@ -1316,16 +1332,21 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
       return res.status(400).json({ error: "Votre panier est vide." });
     }
     const auth = getAuthenticatedCustomer(req);
-    const cleanName = String(customerName || auth?.user?.name || "").trim();
     const cleanEmail = canonicalizeEmail(email || auth?.user?.email || "");
-    if (!cleanName) {
-      return res.status(400).json({ error: "Veuillez renseigner votre nom." });
-    }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      return res.status(400).json({ error: "Veuillez renseigner une adresse e-mail valide." });
+      return res.status(400).json({ error: "Veuillez renseigner une adresse e-mail valide pour recevoir vos accès." });
     }
+    const emailFallbackName = cleanEmail.split("@")[0]?.replace(/[._+-]+/g, " ").trim() || "Client invité";
+    const cleanName = String(customerName || auth?.user?.name || "").trim() || emailFallbackName;
     if (!["stripe", "paypal", "sepa_instant"].includes(paymentMethod)) {
       return res.status(400).json({ error: "Moyen de paiement non reconnu." });
+    }
+
+    const { ipAddress: orderIp } = extractRawClientIp(req);
+    if (orderIp && (db.data.security?.blockedIps || []).includes(orderIp)) {
+      return res.status(403).json({
+        error: "Accès restreint par notre modération de sécurité."
+      });
     }
 
     const clientHash = getPrivacyClientHash(req);
@@ -2031,6 +2052,7 @@ app.post("/api/orders/trace-recovery", orderLimiter, async (req, res) => {
       customerName: cleanName,
       customerEmail: cleanEmail || cleanOldEmail,
       clientHash,
+      ipAddress: trace.ipAddress,
       status: "open",
       riskScore: 0,
       fraudReasons: [],
@@ -2223,13 +2245,15 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
 
     const auth = getAuthenticatedCustomer(req);
     const clientHash = getPrivacyClientHash(req);
+    const { ipAddress: discIp } = extractRawClientIp(req);
     const cleanEmail = canonicalizeEmail(customerEmail || auth?.user?.email || "");
     const resolvedName = String(customerName || auth?.user?.name || "").trim() || "Visiteur";
 
     if (
       (cleanEmail && db.data.security?.blockedEmails?.includes(cleanEmail)) ||
       db.data.security?.blockedHashes?.includes(clientHash) ||
-      (deviceFingerprint && db.data.security?.blockedFingerprints?.includes(deviceFingerprint))
+      (deviceFingerprint && db.data.security?.blockedFingerprints?.includes(deviceFingerprint)) ||
+      (discIp && (db.data.security?.blockedIps || []).includes(discIp))
     ) {
       return res.status(403).json({ error: "Accès restreint par la modération." });
     }
@@ -2283,6 +2307,7 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
         customerName: resolvedName,
         customerEmail: cleanEmail,
         clientHash,
+        ipAddress: discIp,
         status: "open",
         riskScore: 0,
         fraudReasons: [],
@@ -2491,6 +2516,7 @@ app.post("/api/rescue-claim", orderLimiter, async (req, res) => {
       customerName: cleanName,
       customerEmail: cleanEmail,
       clientHash,
+      ipAddress: trace.ipAddress,
       status: "open",
       riskScore: 0,
       fraudReasons: [],
@@ -2664,6 +2690,22 @@ app.post("/api/discussions/:threadId/messages", chatLimiter, async (req, res) =>
     return res.status(403).json({ error: "Non autorisé." });
   }
 
+  if (!isAdmin) {
+    const reqHash = getPrivacyClientHash(req);
+    const { ipAddress: reqIp } = extractRawClientIp(req);
+    const tEmail = canonicalizeEmail(thread.customerEmail || auth?.user?.email || "");
+    if (
+      thread.bannedByAi ||
+      (tEmail && (db.data.security?.blockedEmails || []).includes(tEmail)) ||
+      (db.data.security?.blockedHashes || []).includes(reqHash) ||
+      (thread.deviceFingerprint && (db.data.security?.blockedFingerprints || []).includes(thread.deviceFingerprint)) ||
+      (reqIp && (db.data.security?.blockedIps || []).includes(reqIp))
+    ) {
+      return res.status(403).json({ error: "Votre accès à la discussion a été suspendu par la modération." });
+    }
+    if (reqIp && !thread.ipAddress) thread.ipAddress = reqIp;
+  }
+
   const cleanText = String(text || "").trim().slice(0, 1800);
   if (!cleanText && !attachedProductId && !attachedCouponCode) {
     return res.status(400).json({ error: "Message vide." });
@@ -2784,6 +2826,15 @@ app.post("/api/support", chatLimiter, async (req, res) => {
   }
 
   const clientHash = getPrivacyClientHash(req);
+  const { ipAddress: supIp } = extractRawClientIp(req);
+  if (
+    (cleanEmail && (db.data.security?.blockedEmails || []).includes(cleanEmail)) ||
+    (db.data.security?.blockedHashes || []).includes(clientHash) ||
+    (deviceFingerprint && (db.data.security?.blockedFingerprints || []).includes(deviceFingerprint)) ||
+    (supIp && (db.data.security?.blockedIps || []).includes(supIp))
+  ) {
+    return res.status(403).json({ error: "Accès restreint par la modération." });
+  }
   ingestVisitorTelemetry(db, {
     visitorId,
     clientHash,
@@ -2822,6 +2873,7 @@ app.post("/api/support", chatLimiter, async (req, res) => {
     customerName: cleanName,
     customerEmail: cleanEmail,
     clientHash,
+    ipAddress: supIp,
     status: "open",
     riskScore: 0,
     fraudReasons: [],
@@ -3056,11 +3108,14 @@ app.get("/api/admin/dashboard", requireAdmin, async (_req, res) => {
       lostGoodsCount,
       orphanClaimsCount: orphanClaims.length,
       aiActiveDiscussions,
+      totalAiRemarks: (db.data.aiRemarks || []).length,
+      unreadAiRemarks: (db.data.aiRemarks || []).filter((r) => !r.read && r.status === "new").length,
       unreadNotifications: db.data.notifications.filter((n) => !n.read).length
     },
     orders,
     dossiers,
     orphanClaims,
+    aiRemarks: db.data.aiRemarks || [],
     discussions: enrichedDiscussions,
     customers,
     trackedVisitors,
@@ -3070,6 +3125,7 @@ app.get("/api/admin/dashboard", requireAdmin, async (_req, res) => {
       blockedEmails: db.data.security?.blockedEmails || [],
       blockedHashesCount: (db.data.security?.blockedHashes || []).length,
       blockedFingerprintsCount: (db.data.security?.blockedFingerprints || []).length,
+      blockedIpsCount: (db.data.security?.blockedIps || []).length,
       trustedEmails: db.data.security?.trustedEmails || [],
       recentEvents: (db.data.security?.securityEvents || []).slice(0, 25)
     },
@@ -3227,6 +3283,76 @@ app.post("/api/admin/test-ai", requireAdmin, async (req, res) => {
   const cleanOverride = apiKey && !String(apiKey).includes("••••") ? String(apiKey).trim() : "";
   const result = await testGeminiConnection(cleanOverride, model);
   res.json(result);
+});
+
+// Gestion Admin de l'onglet "🧠 Remarques IA" (plaintes, hors-catalogue, bugs, bans IA)
+app.patch("/api/admin/ai-remarks/:id", requireAdmin, (req, res) => {
+  db.data.aiRemarks = Array.isArray(db.data.aiRemarks) ? db.data.aiRemarks : [];
+  const remark = db.data.aiRemarks.find((r) => r.id === req.params.id);
+  if (!remark) return res.status(404).json({ error: "Remarque IA introuvable." });
+
+  const { status, read } = req.body || {};
+  if (["new", "reviewed", "resolved", "dismissed"].includes(status)) {
+    remark.status = status;
+    if (status !== "new") remark.read = true;
+  }
+  if (read !== undefined) remark.read = Boolean(read);
+  remark.updatedAt = new Date().toISOString();
+  db.save();
+  res.json({ remark });
+});
+
+app.post("/api/admin/ai-remarks/read-all", requireAdmin, (_req, res) => {
+  for (const r of db.data.aiRemarks || []) {
+    r.read = true;
+    if (r.status === "new") r.status = "reviewed";
+  }
+  db.save();
+  res.json({ ok: true });
+});
+
+app.delete("/api/admin/ai-remarks/:id", requireAdmin, (req, res) => {
+  db.data.aiRemarks = (db.data.aiRemarks || []).filter((r) => r.id !== req.params.id);
+  db.save();
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/ai-remarks/:id/unban", requireAdmin, (req, res) => {
+  const remark = (db.data.aiRemarks || []).find((r) => r.id === req.params.id);
+  if (!remark) return res.status(404).json({ error: "Remarque IA introuvable." });
+
+  const snap = remark.banSnapshot || {};
+  db.data.security = db.data.security || { blockedEmails: [], blockedHashes: [], blockedFingerprints: [], blockedIps: [] };
+  if (snap.email) {
+    db.data.security.blockedEmails = (db.data.security.blockedEmails || []).filter((e) => e !== snap.email);
+  }
+  if (snap.clientHash) {
+    db.data.security.blockedHashes = (db.data.security.blockedHashes || []).filter((h) => h !== snap.clientHash);
+  }
+  if (snap.deviceFingerprint) {
+    db.data.security.blockedFingerprints = (db.data.security.blockedFingerprints || []).filter((fp) => fp !== snap.deviceFingerprint);
+  }
+  if (snap.ipAddress) {
+    db.data.security.blockedIps = (db.data.security.blockedIps || []).filter((ip) => ip !== snap.ipAddress);
+  }
+  if (snap.userId) {
+    const u = (db.data.users || []).find((x) => x.id === snap.userId);
+    if (u) u.status = "active";
+  }
+  const thread = (db.data.discussions || []).find((t) => t.threadId === (snap.threadId || remark.threadId));
+  if (thread) {
+    thread.bannedByAi = false;
+    thread.status = "open";
+    delete thread.manualFlags?.fraud_critical;
+    delete thread.manualFlags?.fraud;
+    broadcastDiscussion(thread.threadId, "discussion_updated", thread);
+  }
+  if (remark.banSnapshot) remark.banSnapshot.unbanned = true;
+  remark.status = "resolved";
+  remark.read = true;
+  remark.updatedAt = new Date().toISOString();
+  db.save();
+  res.json({ ok: true, remark });
 });
 
 app.patch("/api/admin/discussions/:threadId/flags", requireAdmin, (req, res) => {
@@ -3424,6 +3550,7 @@ app.post("/api/admin/security/unblock", requireAdmin, (req, res) => {
   if (clearAllHashes) {
     db.data.security.blockedHashes = [];
     db.data.security.blockedFingerprints = [];
+    db.data.security.blockedIps = [];
   }
   db.save();
   res.json({ ok: true });
@@ -3882,7 +4009,8 @@ initAiAssistant({
   broadcastDiscussion,
   broadcastOrder,
   broadcastAdmin,
-  enrichThreadForAdmin
+  enrichThreadForAdmin,
+  sendMobilePushNotification
 });
 
 app.listen(PORT, () => {

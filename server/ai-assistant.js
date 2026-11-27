@@ -32,7 +32,8 @@ let deps = {
   broadcastDiscussion: null,
   broadcastOrder: null,
   broadcastAdmin: null,
-  enrichThreadForAdmin: null
+  enrichThreadForAdmin: null,
+  sendMobilePushNotification: null
 };
 
 export function initAiAssistant(injected = {}) {
@@ -80,7 +81,7 @@ function clearThreadTimers(threadId) {
   }
 }
 
-function buildRelayMessage(relayEvent, delaySeconds = 60) {
+function buildRelayMessage(relayEvent, delaySeconds = 60, customText = "") {
   const nowIso = new Date().toISOString();
   const texts = {
     human_requested: `📩 Demande d'assistance humaine envoyée ! Un conseiller NEXUS a été alerté en priorité. S'il n'est pas disponible sous ${delaySeconds}s, notre assistant IA prendra automatiquement le relais pour vous aider.`,
@@ -89,13 +90,15 @@ function buildRelayMessage(relayEvent, delaySeconds = 60) {
     human_takeover:
       "👤 Un conseiller humain reprend le relais de la conversation. L'assistant IA est mis en pause.",
     ai_resume:
-      "🤖 Le conseiller humain a passé le relais — l'assistant IA NEXUS reprend le relais pour continuer à vous aider."
+      "🤖 Le conseiller humain a passé le relais — l'assistant IA NEXUS reprend le relais pour continuer à vous aider.",
+    ai_ban:
+      customText || "🚫 Accès suspendu automatiquement par la modération IA NEXUS suite à un comportement abusif."
   };
   return {
     id: `dmsg_relay_${Date.now()}_${crypto.randomBytes(2).toString("hex")}`,
     sender: "relay",
     relayEvent,
-    text: texts[relayEvent] || texts.human_requested,
+    text: customText || texts[relayEvent] || texts.human_requested,
     createdAt: nowIso
   };
 }
@@ -165,7 +168,7 @@ function buildSystemInstructionForThread(thread) {
     .filter((p) => p.active !== false)
     .map(
       (p) =>
-        `- ${p.title} : ${p.price} € (${p.duration || "12 mois"}), dispo: ${p.availability === "out_of_stock" ? "Rupture" : p.availability === "low_stock" ? "Stock limité" : "En stock"}, activation: ${p.activationFormat || "Livraison directe + e-mail"}`
+        `- [ID: ${p.id}] ${p.title} : ${p.price} € (${p.duration || "12 mois"}), dispo: ${p.availability === "out_of_stock" ? "Rupture" : p.availability === "low_stock" ? "Stock limité" : "En stock"}, activation: ${p.activationFormat || "Livraison directe + e-mail"}`
     )
     .join("\n");
 
@@ -191,20 +194,268 @@ function buildSystemInstructionForThread(thread) {
     `1. Réponds toujours en français clair, chaleureux, rassurant et concis (maximum 4 à 6 phrases, va à l'essentiel).`,
     `2. N'INVENTE JAMAIS d'identifiants, de mots de passe, de codes PIN, de liens d'invitation, ni de confirmation de paiement bancaire.`,
     `3. Ne promets jamais d'accès gratuit, de remboursement automatique ou d'envoi avant vérification humaine du paiement.`,
-    `4. Si le client dit avoir perdu son bien, ses accès, fermé sa page ou fait une erreur d'e-mail : rassure-le immédiatement (les achats sont tracés dans nos Dossiers avec sauvegarde permanente) et demande-lui les indices utiles pour l'administrateur s'ils manquent : numéro de commande (#NX-...), adresse e-mail utilisée, nom du titulaire bancaire/PayPal, montant et moyen de paiement ; indique aussi le bouton « Mes Accès » ou « Secours Paiement ».`,
-    `5. Ne divulgue jamais d'informations sur d'autres clients ni aucune clé ou détail technique interne.`,
+    `4. Paiement SANS COMPTE : rappelle que les clients peuvent commander et payer directement sans créer de compte (un simple e-mail suffit pour recevoir les accès).`,
+    `5. Si le client dit avoir perdu son bien, ses accès, fermé sa page ou fait une erreur d'e-mail : rassure-le immédiatement (les achats sont tracés dans nos Dossiers) et demande les indices utiles (n° commande, e-mail, titulaire bancaire, montant) ; indique « Mes Accès » ou « Secours Paiement ».`,
+    `6. Ne divulgue jamais d'informations sur d'autres clients ni aucune clé ou détail technique interne.`,
+    ``,
+    `ACTIONS SYSTÈME SPÉCIALES (invisibles pour le client — place-les UNIQUEMENT sur des lignes séparées tout à la fin de ta réponse, sans jamais les mentionner dans ton texte) :`,
+    `A) AFFICHER L'AFFICHE D'UN PRODUIT : Si le client demande à voir un produit, son affiche, sa fiche, son prix ou le catalogue (ex: "montre moi Netflix", "affiche YouTube", "voir vos offres"), ajoute une ligne par produit demandé avec son ID exact (ou "all" pour tout le catalogue) :`,
+    `[[ACTION:SHOW_PRODUCT:youtube-premium]]`,
+    `B) REMARQUE / PLAINTE POUR L'ADMIN (onglet "Remarques IA") : Dès qu'un client formule une plainte, demande un abonnement qui N'EST PAS dans le catalogue (ex: Spotify, Disney+, Canal+, Prime, Crunchyroll, Xbox...), signale un bug du site, un problème de paiement ou une suggestion importante, ajoute :`,
+    `[[ACTION:REMARK:{"category":"missing_product|site_bug|payment_issue|complaint|pricing|suggestion|other","severity":"low|medium|high|critical","title":"Titre court clair","summary":"Résumé précis de la remarque client","requestedProduct":"Nom du service si hors catalogue sinon vide"}]]`,
+    `C) BANNIR UN UTILISATEUR ABUSIF : UNIQUEMENT en cas d'abus grave avéré (insultes violentes, harcèlement, menaces, spam massif, tentative d'arnaque/phishing/piratage ou extorsion). NE BANNIS JAMAIS un client poli, inquiet ou qui signale simplement un bug ou une plainte légitime ! Si un bannissement est réellement justifié, ajoute :`,
+    `[[ACTION:BAN_USER:{"reason":"Motif précis du bannissement"}]]`,
     ``,
     `CATALOGUE ACTUEL NEXUS SUBS :`,
     products || "- Offres disponibles sur le catalogue du site.",
     ``,
     `PAIEMENTS & LIVRAISON :`,
-    `- Moyens acceptés : Stripe (CB / Apple Pay / Google Pay), PayPal, Virement SEPA Instantané 10s avec QR Code bancaire.`,
+    `- Achat express sans compte requis : Stripe (CB / Apple Pay / Google Pay), PayPal, Virement SEPA Instantané 10s avec QR Code bancaire.`,
     `- Livraison dans le coffre sécurisé chiffré (« Mes Accès ») + par e-mail après confirmation du règlement. Garantie continuité 365 jours incluse.`,
     `- Sujet actuel de cette discussion : ${thread.topicLabel || "Question générale"}.`,
     linkedOrders ? `\nCOMMANDES LIÉES À CE CLIENT (statut uniquement) :\n${linkedOrders}` : ""
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function parseAiActions(rawText = "") {
+  const actions = {
+    showProducts: [],
+    remarks: [],
+    ban: null
+  };
+  const regex = /\[\[ACTION:(SHOW_PRODUCT|REMARK|BAN_USER):([^\]]+)\]\]/gi;
+  const cleanText = String(rawText || "")
+    .replace(regex, (_full, kind, payload) => {
+      const k = String(kind || "").toUpperCase();
+      const val = String(payload || "").trim();
+      if (k === "SHOW_PRODUCT" && val) {
+        actions.showProducts.push(val);
+      } else if (k === "REMARK" && val) {
+        try {
+          const obj = JSON.parse(val);
+          if (obj && typeof obj === "object") actions.remarks.push(obj);
+        } catch {
+          actions.remarks.push({ category: "other", severity: "medium", title: "Remarque IA", summary: val });
+        }
+      } else if (k === "BAN_USER" && val) {
+        try {
+          const obj = JSON.parse(val);
+          actions.ban = { reason: String(obj?.reason || val).slice(0, 260) };
+        } catch {
+          actions.ban = { reason: val.slice(0, 260) };
+        }
+      }
+      return "";
+    })
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return { cleanText, actions };
+}
+
+function resolveProductPosterAttachments(requestedIds = []) {
+  if (!requestedIds.length) return [];
+  const activeProducts = (db.data.products || []).filter((p) => p.active !== false);
+  const picked = new Map();
+
+  for (const raw of requestedIds) {
+    const token = String(raw || "").trim().toLowerCase();
+    if (!token) continue;
+    if (token === "all" || token === "catalogue" || token === "tous") {
+      for (const p of activeProducts.slice(0, 6)) picked.set(p.id, p);
+      continue;
+    }
+    const found =
+      activeProducts.find((p) => p.id.toLowerCase() === token || (p.slug && p.slug.toLowerCase() === token)) ||
+      activeProducts.find((p) => p.title.toLowerCase().includes(token) || token.includes(p.id.toLowerCase()));
+    if (found) picked.set(found.id, found);
+  }
+
+  return Array.from(picked.values()).map((p) => ({
+    type: "product_poster",
+    id: p.id,
+    title: p.title,
+    tagline: p.tagline,
+    price: p.price,
+    compareAtPrice: p.compareAtPrice ?? null,
+    duration: p.duration || "12 mois",
+    badge: p.badge || "Offre 12 Mois",
+    badgeColor: p.badgeColor || "custom",
+    categoryLabel: p.categoryLabel || "Abonnement",
+    accentColor: p.accentColor || "#8b5cf6",
+    accentGlow: p.accentGlow || "rgba(139,92,246,0.22)",
+    availability: p.availability || "in_stock",
+    stockCount: p.stockCount ?? null,
+    shortFeatures: Array.isArray(p.shortFeatures) ? p.shortFeatures.slice(0, 4) : []
+  }));
+}
+
+function recordAiRemark(thread, rawRemark, { aiModel = "", banSnapshot = null } = {}) {
+  const nowIso = new Date().toISOString();
+  const validCategories = ["missing_product", "site_bug", "payment_issue", "complaint", "pricing", "suggestion", "ai_ban", "other"];
+  const validSeverities = ["low", "medium", "high", "critical"];
+
+  const category = validCategories.includes(rawRemark.category) ? rawRemark.category : "other";
+  const severity = validSeverities.includes(rawRemark.severity) ? rawRemark.severity : "medium";
+  const title = String(rawRemark.title || "Remarque client détectée par l'IA").trim().slice(0, 140);
+  const summary = String(rawRemark.summary || "").trim().slice(0, 600);
+  const requestedProduct = String(rawRemark.requestedProduct || "").trim().slice(0, 80);
+
+  db.data.aiRemarks = Array.isArray(db.data.aiRemarks) ? db.data.aiRemarks : [];
+
+  // Déduplication 10 min sur même fil + catégorie + titre identique
+  const dup = db.data.aiRemarks.find(
+    (r) =>
+      r.threadId === thread.threadId &&
+      r.category === category &&
+      r.title.toLowerCase() === title.toLowerCase() &&
+      Date.now() - new Date(r.createdAt).getTime() < 10 * 60_000
+  );
+  if (dup) {
+    dup.summary = summary || dup.summary;
+    dup.updatedAt = nowIso;
+    return dup;
+  }
+
+  const lastCustMsg = [...(thread.messages || [])].reverse().find((m) => m.sender === "customer")?.text || "";
+  const remark = {
+    id: `rem_${Date.now()}_${crypto.randomBytes(2).toString("hex")}`,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    status: "new",
+    read: false,
+    category,
+    severity,
+    title,
+    summary: summary || lastCustMsg.slice(0, 260),
+    requestedProduct,
+    customerMessage: String(lastCustMsg).slice(0, 400),
+    threadId: thread.threadId,
+    customerName: thread.customerName || "Visiteur",
+    customerEmail: thread.customerEmail || "",
+    aiModel,
+    banSnapshot
+  };
+
+  db.data.aiRemarks.unshift(remark);
+  db.data.aiRemarks = db.data.aiRemarks.slice(0, 250);
+
+  const catIcons = {
+    missing_product: "📦",
+    site_bug: "🐞",
+    payment_issue: "💳",
+    complaint: "😤",
+    pricing: "💶",
+    suggestion: "💡",
+    ai_ban: "🚫",
+    other: "🧠"
+  };
+  const icon = catIcons[category] || "🧠";
+
+  const notif = db.addNotification({
+    type: "ai_remark",
+    title: `${icon} Remarque IA : ${title}`,
+    message: `${thread.customerName || "Client"} — ${remark.summary.slice(0, 140)}`,
+    threadId: thread.threadId,
+    meta: { remarkId: remark.id, category, severity }
+  });
+  deps.broadcastAdmin?.("ai_remark_created", { remark, notification: notif });
+
+  const baseUrl = String(db.data.settings?.publicUrl || "").trim().replace(/\/+$/, "");
+  const clickUrl = baseUrl ? `${baseUrl}/?adminTab=ai_remarks#admin` : "";
+  deps.sendMobilePushNotification?.({
+    title: `${icon} Remarque IA (${category === "ai_ban" ? "BAN" : severity.toUpperCase()}) : ${title}`,
+    message: `Client : ${remark.customerName}${remark.customerEmail ? ` (${remark.customerEmail})` : ""}\n${remark.summary.slice(0, 260)}`,
+    priority: severity === "critical" || severity === "high" ? "urgent" : "high",
+    tags: category === "ai_ban" ? "no_entry,rotating_light" : category === "site_bug" ? "beetle,warning" : "brain,sparkles",
+    clickUrl
+  }).catch(() => {});
+
+  return remark;
+}
+
+function executeAiBanOnThread(thread, reason, aiModel = "") {
+  const cleanReason = String(reason || "Comportement abusif détecté par la modération IA").trim().slice(0, 260);
+  db.data.security = db.data.security || {
+    blockedEmails: [],
+    blockedHashes: [],
+    blockedFingerprints: [],
+    blockedIps: [],
+    trustedEmails: [],
+    trustedUserIds: [],
+    securityEvents: []
+  };
+  db.data.security.blockedEmails = db.data.security.blockedEmails || [];
+  db.data.security.blockedHashes = db.data.security.blockedHashes || [];
+  db.data.security.blockedFingerprints = db.data.security.blockedFingerprints || [];
+  db.data.security.blockedIps = db.data.security.blockedIps || [];
+
+  const cleanEmail = canonicalizeEmail(thread.customerEmail || "");
+  if (cleanEmail && !db.data.security.blockedEmails.includes(cleanEmail)) {
+    db.data.security.blockedEmails.push(cleanEmail);
+  }
+  if (thread.clientHash && !db.data.security.blockedHashes.includes(thread.clientHash)) {
+    db.data.security.blockedHashes.push(thread.clientHash);
+  }
+  if (thread.deviceFingerprint && !db.data.security.blockedFingerprints.includes(thread.deviceFingerprint)) {
+    db.data.security.blockedFingerprints.push(thread.deviceFingerprint);
+  }
+  if (thread.ipAddress && !db.data.security.blockedIps.includes(thread.ipAddress)) {
+    db.data.security.blockedIps.push(thread.ipAddress);
+  }
+
+  let suspendedUserId = null;
+  const linkedUser = (db.data.users || []).find(
+    (u) => (thread.userId && u.id === thread.userId) || (cleanEmail && canonicalizeEmail(u.email) === cleanEmail)
+  );
+  if (linkedUser) {
+    linkedUser.status = "suspended";
+    suspendedUserId = linkedUser.id;
+    db.revokeAllUserSessions(linkedUser.id);
+  }
+
+  thread.status = "resolved";
+  thread.bannedByAi = true;
+  thread.banReason = cleanReason;
+  thread.manualFlags = thread.manualFlags || {};
+  thread.manualFlags.fraud_critical = true;
+  thread.manualFlags.fraud = true;
+
+  const banMsg = buildRelayMessage("ai_ban", 60, `🚫 Accès banni automatiquement par la modération IA NEXUS. Motif : ${cleanReason}`);
+  thread.messages.push(banMsg);
+  syncRelayOrAiMessageToLinkedOrder(thread, banMsg);
+
+  db.recordSecurityEvent({
+    type: "ai_auto_ban",
+    email: cleanEmail,
+    clientHash: thread.clientHash || "",
+    ipAddress: thread.ipAddress || "",
+    threadId: thread.threadId,
+    reason: cleanReason
+  });
+
+  recordAiRemark(
+    thread,
+    {
+      category: "ai_ban",
+      severity: "critical",
+      title: `Client banni par l'IA : ${thread.customerName || "Visiteur"}`,
+      summary: `Motif : ${cleanReason}`
+    },
+    {
+      aiModel,
+      banSnapshot: {
+        email: cleanEmail,
+        clientHash: thread.clientHash || "",
+        deviceFingerprint: thread.deviceFingerprint || "",
+        ipAddress: thread.ipAddress || "",
+        userId: suspendedUserId,
+        threadId: thread.threadId,
+        unbanned: false
+      }
+    }
+  );
 }
 
 function buildConversationContents(thread) {
@@ -356,20 +607,34 @@ async function generateAndPostAiReply(threadId, expectedVersion) {
     if (db.data.settings.ai) db.data.settings.ai.lastError = "";
     freshCtrl.lastError = "";
 
-    const nowIso = new Date().toISOString();
-    const aiMsg = {
-      id: `dmsg_ai_${Date.now()}_${crypto.randomBytes(2).toString("hex")}`,
-      sender: "ai",
-      aiModel: result.model,
-      text: result.text.slice(0, 1800),
-      createdAt: nowIso
-    };
-    freshThread.messages.push(aiMsg);
-    freshThread.updatedAt = nowIso;
-    freshThread.unreadByCustomer = (freshThread.unreadByCustomer || 0) + 1;
-    freshCtrl.lastAiReplyAt = nowIso;
+    const { cleanText, actions } = parseAiActions(result.text);
+    const posterAttachments = resolveProductPosterAttachments(actions.showProducts);
 
-    syncRelayOrAiMessageToLinkedOrder(freshThread, aiMsg);
+    const nowIso = new Date().toISOString();
+    if (cleanText || posterAttachments.length > 0) {
+      const aiMsg = {
+        id: `dmsg_ai_${Date.now()}_${crypto.randomBytes(2).toString("hex")}`,
+        sender: "ai",
+        aiModel: result.model,
+        text: cleanText.slice(0, 1800),
+        attachments: posterAttachments.length > 0 ? posterAttachments : undefined,
+        createdAt: nowIso
+      };
+      freshThread.messages.push(aiMsg);
+      freshThread.updatedAt = nowIso;
+      freshThread.unreadByCustomer = (freshThread.unreadByCustomer || 0) + 1;
+      freshCtrl.lastAiReplyAt = nowIso;
+      syncRelayOrAiMessageToLinkedOrder(freshThread, aiMsg);
+    }
+
+    for (const rem of actions.remarks) {
+      recordAiRemark(freshThread, rem, { aiModel: result.model });
+    }
+
+    if (actions.ban) {
+      executeAiBanOnThread(freshThread, actions.ban.reason, result.model);
+    }
+
     db.save();
     broadcastThreadUpdate(freshThread, "new_message");
   } finally {

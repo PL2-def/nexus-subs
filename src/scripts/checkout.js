@@ -121,36 +121,17 @@ function renderCheckoutForm() {
                 </div>
               `
               : `
-                <div class="checkout-account-banner">
-                  <span>💡 Vous avez déjà un compte NEXUS ?</span>
-                  <button type="button" class="inline-legal-btn" id="btn-checkout-signin">Se connecter / Créer un compte</button>
+                <div class="checkout-account-banner guest-express">
+                  <span>⚡ <strong>Paiement sans compte</strong> — aucune inscription requise ! Indiquez juste votre e-mail pour recevoir vos accès immédiatement.</span>
+                  <button type="button" class="inline-legal-btn" id="btn-checkout-signin">Déjà un compte ?</button>
                 </div>
               `
           }
 
           <div class="form-row">
             <div class="form-group">
-              <label for="checkout-name" class="form-label">Prénom &amp; Nom *</label>
-              <input
-                type="text"
-                id="checkout-name"
-                name="name"
-                class="form-control"
-                placeholder="Thomas Martin"
-                value="${escapeHtml(account.authenticated && account.user ? account.user.name : "")}"
-                autocomplete="name"
-                autofocus
-                required
-                data-error="checkout-name-err"
-              />
-              <div id="checkout-name-err" class="field-error-msg">
-                <span role="img" aria-label="Erreur">⚠️</span> Indiquez votre nom complet.
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label for="checkout-email" class="form-label">Adresse e-mail personnelle *</label>
-              <span id="checkout-email-hint" class="input-hint">Utilisez une vraie boîte mail (adresses jetables refusées par sécurité)</span>
+              <label for="checkout-email" class="form-label">Adresse e-mail de réception *</label>
+              <span id="checkout-email-hint" class="input-hint">Vos accès + certificat de commande y seront envoyés (adresses jetables refusées)</span>
               <input
                 type="email"
                 id="checkout-email"
@@ -160,12 +141,27 @@ function renderCheckoutForm() {
                 value="${escapeHtml(account.authenticated && account.user ? account.user.email : "")}"
                 autocomplete="email"
                 aria-describedby="checkout-email-hint"
+                autofocus
                 required
                 data-error="checkout-email-err"
               />
               <div id="checkout-email-err" class="field-error-msg">
                 <span role="img" aria-label="Erreur">⚠️</span> Saisissez une adresse e-mail valide (ex: vous@exemple.fr).
               </div>
+            </div>
+
+            <div class="form-group">
+              <label for="checkout-name" class="form-label">Prénom ou pseudo (facultatif)</label>
+              <span class="input-hint">Laissez vide pour commander encore plus vite</span>
+              <input
+                type="text"
+                id="checkout-name"
+                name="name"
+                class="form-control"
+                placeholder="Ex : Thomas (facultatif)"
+                value="${escapeHtml(account.authenticated && account.user ? account.user.name : "")}"
+                autocomplete="name"
+              />
             </div>
           </div>
 

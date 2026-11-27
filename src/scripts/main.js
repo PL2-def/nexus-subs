@@ -23,6 +23,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initGuideAndRescue();
   await initCustomerDiscussionWidget();
   admin.init();
+  window.openProductDetailModal = openProductDetail;
 
   const syncSupportPrefill = () => {
     const sName = document.getElementById("support-name");
@@ -50,10 +51,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   await handlePaymentReturnQuery();
 
-  // Ouverture directe depuis notification mobile Admin (?adminOrder=... ou ?adminThread=...), /admin ou #admin
+  // Ouverture directe depuis notification mobile Admin (?adminOrder=..., ?adminThread=..., ?adminTab=...), /admin ou #admin
   const params = new URLSearchParams(window.location.search);
   const adminOrder = params.get("adminOrder");
   const adminThread = params.get("adminThread");
+  const adminTab = params.get("adminTab");
   const isAdminPath = /^\/admin\/?$/i.test(window.location.pathname);
   if (adminOrder) {
     window.history.replaceState({}, "", "/");
@@ -61,6 +63,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   } else if (adminThread) {
     window.history.replaceState({}, "", "/");
     admin.openModal("discussions", { threadId: adminThread });
+  } else if (adminTab) {
+    window.history.replaceState({}, "", "/");
+    admin.openModal(adminTab);
   } else if (window.location.hash === "#admin" || isAdminPath) {
     admin.openModal();
   }

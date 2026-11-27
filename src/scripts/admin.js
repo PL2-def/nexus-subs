@@ -249,7 +249,9 @@ function getRelayStatusMeta(aiControl) {
 function renderAdminChatBubble(m, customerName = "Client") {
   const relayCls =
     m.sender === "relay"
-      ? m.relayEvent === "human_takeover"
+      ? m.relayEvent === "ai_ban"
+        ? "msg-relay relay-ban"
+        : m.relayEvent === "human_takeover"
         ? "msg-relay relay-human"
         : m.relayEvent === "ai_takeover" || m.relayEvent === "ai_resume"
         ? "msg-relay relay-ai"
@@ -271,7 +273,9 @@ function renderAdminChatBubble(m, customerName = "Client") {
       : m.sender === "ai"
       ? `🤖 Assistant IA (${m.aiModel || "Gemini"})`
       : m.sender === "relay"
-      ? m.relayEvent === "human_takeover"
+      ? m.relayEvent === "ai_ban"
+        ? "🚫 MODÉRATION IA — ACCÈS BANNI"
+        : m.relayEvent === "human_takeover"
         ? "👤 REPRISE HUMAINE"
         : m.relayEvent === "ai_takeover" || m.relayEvent === "ai_resume"
         ? "🤖 RELAIS IA ACTIVÉ"
@@ -285,6 +289,12 @@ function renderAdminChatBubble(m, customerName = "Client") {
     day: "2-digit",
     month: "short"
   });
+  const aiPostersHtml = Array.isArray(m.attachments) && m.attachments.length > 0
+    ? `<div class="admin-chat-posters-note">🖼️ Affiche(s) produit montrée(s) par l'IA : ${m.attachments
+        .filter((a) => a?.type === "product_poster")
+        .map((a) => `<strong>${escapeHtml(a.title)} (${a.price} €)</strong>`)
+        .join(", ")}</div>`
+    : "";
   return `
     <div class="chat-bubble ${cls}">
       <div class="chat-bubble-meta">
@@ -297,6 +307,7 @@ function renderAdminChatBubble(m, customerName = "Client") {
           ? `<div style="margin-top:0.35rem;font-size:0.78rem;color:var(--accent-cyan-light);">Pièce jointe envoyée : <strong>${escapeHtml(m.attachment.title || m.attachment.code)}</strong></div>`
           : ""
       }
+      ${aiPostersHtml}
     </div>
   `;
 }
@@ -305,9 +316,10 @@ class AdminController {
   constructor() {
     this.token = localStorage.getItem(ADMIN_TOKEN_KEY) || "";
     this.dashboard = null;
-    this.activeTab = "discussions"; // 'discussions' | 'dossiers' | 'orders' | 'customers' | 'catalog' | 'integrations' | 'coupons'
+    this.activeTab = "discussions"; // 'discussions' | 'ai_remarks' | 'dossiers' | 'orders' | 'customers' | 'catalog' | 'integrations' | 'coupons'
     this.orderFilter = "all";
     this.discFilter = "all";
+    this.remarkFilter = "all";
     this.dossierFilter = "all";
     this.dossierSearch = "";
     this.selectedDossierId = null;
@@ -390,7 +402,12 @@ class AdminController {
       const es = new EventSource(`/api/events/admin?adminToken=${encodeURIComponent(this.token)}`);
       const onEvent = async (evtName) => {
         await this.refreshDashboardSilently();
-        if (evtName === "order_created" || evtName === "discussion_updated" || evtName === "notification") {
+        if (
+          evtName === "order_created" ||
+          evtName === "discussion_updated" ||
+          evtName === "notification" ||
+          evtName === "ai_remark_created"
+        ) {
           playChime("delivery");
         }
         const adminDialog = document.getElementById("admin-dialog");
@@ -399,6 +416,7 @@ class AdminController {
       es.addEventListener("order_created", () => onEvent("order_created"));
       es.addEventListener("order_updated", () => onEvent("order_updated"));
       es.addEventListener("discussion_updated", () => onEvent("discussion_updated"));
+      es.addEventListener("ai_remark_created", () => onEvent("ai_remark_created"));
       es.addEventListener("customer_updated", () => onEvent("customer_updated"));
       es.addEventListener("notification", () => onEvent("notification"));
       es.addEventListener("support_message", () => onEvent("support_message"));
@@ -416,7 +434,9 @@ class AdminController {
     if (dot) dot.classList.toggle("online", isLogged);
     if (badge) {
       const s = this.dashboard?.stats || {};
-      const count = isLogged ? (s.pendingDeliveries || 0) + (s.openWaitingDiscussions || 0) : 0;
+      const count = isLogged
+        ? (s.pendingDeliveries || 0) + (s.openWaitingDiscussions || 0) + (s.unreadAiRemarks || 0)
+        : 0;
       badge.textContent = count > 99 ? "99+" : String(count);
       badge.classList.toggle("hidden", count === 0);
     }
@@ -595,6 +615,15 @@ class AdminController {
           }
         </button>
 
+        <button type="button" role="tab" aria-selected="${this.activeTab === "ai_remarks"}" class="admin-tab-btn ${this.activeTab === "ai_remarks" ? "active" : ""}" data-admin-tab="ai_remarks">
+          <span>🧠 Remarques IA</span>
+          ${
+            (d.stats.unreadAiRemarks || 0) > 0
+              ? `<span class="tab-badge-count">${d.stats.unreadAiRemarks} nouv.</span>`
+              : `<span class="tab-badge-count muted">${d.stats.totalAiRemarks ?? (d.aiRemarks || []).length}</span>`
+          }
+        </button>
+
         <button type="button" role="tab" aria-selected="${this.activeTab === "dossiers"}" class="admin-tab-btn ${this.activeTab === "dossiers" ? "active" : ""}" data-admin-tab="dossiers">
           <span>📁 Dossiers</span>
           ${
@@ -641,6 +670,11 @@ class AdminController {
           <span class="bnav-ico" aria-hidden="true">💬</span>
           <span class="bnav-lbl">Chats</span>
           ${(d.stats.urgentDiscussionsCount || 0) > 0 ? `<span class="bnav-badge">${d.stats.urgentDiscussionsCount}</span>` : ""}
+        </button>
+        <button type="button" class="admin-bnav-btn ${this.activeTab === "ai_remarks" ? "active" : ""}" data-admin-tab="ai_remarks" aria-current="${this.activeTab === "ai_remarks" ? "page" : "false"}">
+          <span class="bnav-ico" aria-hidden="true">🧠</span>
+          <span class="bnav-lbl">IA</span>
+          ${(d.stats.unreadAiRemarks || 0) > 0 ? `<span class="bnav-badge">${d.stats.unreadAiRemarks}</span>` : ""}
         </button>
         <button type="button" class="admin-bnav-btn ${this.activeTab === "dossiers" ? "active" : ""}" data-admin-tab="dossiers" aria-current="${this.activeTab === "dossiers" ? "page" : "false"}">
           <span class="bnav-ico" aria-hidden="true">📁</span>
@@ -698,12 +732,175 @@ class AdminController {
 
   renderTabBody(d, savedDraft = "") {
     if (this.activeTab === "discussions") return this.renderDiscussionsMenu(d, savedDraft);
+    if (this.activeTab === "ai_remarks") return this.renderAiRemarksTab(d);
     if (this.activeTab === "dossiers") return this.renderDossiersTab(d);
     if (this.activeTab === "orders") return this.renderOrdersTab(d.orders, d.stats);
     if (this.activeTab === "customers") return this.renderCustomersAntiFraudTab(d);
     if (this.activeTab === "catalog") return this.renderCatalogTab(d.products);
     if (this.activeTab === "integrations") return this.renderIntegrationsTab(d.settings, d.ntfyInfo, d.admin, d.security);
     return this.renderCouponsTab(d.coupons);
+  }
+
+  // ==========================================================================
+  // ONGLET "🧠 REMARQUES IA" : ALERTES GEMINI (HORS CATALOGUE, BUGS, PLAINTES, BANS)
+  // ==========================================================================
+  renderAiRemarksTab(d) {
+    const remarks = Array.isArray(d.aiRemarks) ? d.aiRemarks : [];
+    const CAT_META = {
+      missing_product: { label: "📦 Hors catalogue", cls: "cat-missing" },
+      site_bug: { label: "🐛 Bug du site", cls: "cat-bug" },
+      payment_issue: { label: "💳 Problème paiement", cls: "cat-payment" },
+      complaint: { label: "😤 Plainte client", cls: "cat-complaint" },
+      pricing: { label: "💶 Tarif / Promo", cls: "cat-pricing" },
+      suggestion: { label: "💡 Suggestion", cls: "cat-suggestion" },
+      ai_ban: { label: "🚫 Ban IA", cls: "cat-ban" },
+      other: { label: "📌 Remarque", cls: "cat-other" }
+    };
+    const SEV_META = {
+      critical: { label: "Critique", cls: "sev-critical" },
+      high: { label: "Haute", cls: "sev-high" },
+      medium: { label: "Moyenne", cls: "sev-medium" },
+      low: { label: "Faible", cls: "sev-low" }
+    };
+
+    const unreadCount = remarks.filter((r) => !r.read).length;
+    const missingCount = remarks.filter((r) => r.category === "missing_product").length;
+    const bugCount = remarks.filter((r) => r.category === "site_bug").length;
+    const paymentCount = remarks.filter((r) => r.category === "payment_issue").length;
+    const complaintCount = remarks.filter((r) => r.category === "complaint").length;
+    const banCount = remarks.filter((r) => r.category === "ai_ban").length;
+    const newCount = remarks.filter((r) => r.status !== "resolved").length;
+    const resolvedCount = remarks.filter((r) => r.status === "resolved").length;
+
+    const filtered = remarks.filter((r) => {
+      if (this.remarkFilter === "new") return r.status !== "resolved";
+      if (this.remarkFilter === "resolved") return r.status === "resolved";
+      if (this.remarkFilter !== "all") return r.category === this.remarkFilter;
+      return true;
+    });
+
+    return `
+      <div class="admin-kpi-row four-cols">
+        <div class="admin-kpi-card">
+          <span class="kpi-label">Total Remarques IA</span>
+          <strong class="kpi-val">${remarks.length}</strong>
+        </div>
+        <div class="admin-kpi-card ${unreadCount > 0 ? "kpi-alert" : ""}">
+          <span class="kpi-label">Non lues</span>
+          <strong class="kpi-val">${unreadCount}</strong>
+        </div>
+        <div class="admin-kpi-card">
+          <span class="kpi-label">Hors catalogue / Bugs</span>
+          <strong class="kpi-val">${missingCount} / ${bugCount}</strong>
+        </div>
+        <div class="admin-kpi-card ${banCount > 0 ? "kpi-alert" : ""}">
+          <span class="kpi-label">Bans auto par l'IA</span>
+          <strong class="kpi-val">${banCount}</strong>
+        </div>
+      </div>
+
+      <div class="ai-remarks-toolbar">
+        <div class="disc-admin-filters-bar" style="margin:0;">
+          <button type="button" class="filter-pill ${this.remarkFilter === "all" ? "active" : ""}" data-remark-filter="all">Toutes (${remarks.length})</button>
+          <button type="button" class="filter-pill ${this.remarkFilter === "new" ? "active" : ""}" data-remark-filter="new">À traiter (${newCount})</button>
+          <button type="button" class="filter-pill ${this.remarkFilter === "missing_product" ? "active" : ""}" data-remark-filter="missing_product">📦 Hors catalogue (${missingCount})</button>
+          <button type="button" class="filter-pill pill-filter-fraud ${this.remarkFilter === "site_bug" ? "active" : ""}" data-remark-filter="site_bug">🐛 Bugs site (${bugCount})</button>
+          <button type="button" class="filter-pill pill-filter-urgent ${this.remarkFilter === "payment_issue" ? "active" : ""}" data-remark-filter="payment_issue">💳 Paiement (${paymentCount})</button>
+          <button type="button" class="filter-pill pill-filter-annoyed ${this.remarkFilter === "complaint" ? "active" : ""}" data-remark-filter="complaint">😤 Plaintes (${complaintCount})</button>
+          <button type="button" class="filter-pill pill-filter-fraud ${this.remarkFilter === "ai_ban" ? "active" : ""}" data-remark-filter="ai_ban">🚫 Bans IA (${banCount})</button>
+          <button type="button" class="filter-pill ${this.remarkFilter === "resolved" ? "active" : ""}" data-remark-filter="resolved">✅ Traitées (${resolvedCount})</button>
+        </div>
+        ${
+          unreadCount > 0
+            ? `<button type="button" class="btn btn-outline btn-xs" id="btn-remarks-read-all">✓ Tout marquer lu (${unreadCount})</button>`
+            : ""
+        }
+      </div>
+
+      ${
+        filtered.length === 0
+          ? `
+            <div class="admin-empty-box">
+              <p><strong>Aucune remarque IA dans cette catégorie pour le moment.</strong></p>
+              <p style="font-size:0.82rem;color:var(--text-muted);margin-top:0.35rem;">
+                Dès que Gemini détecte une demande d'abonnement hors catalogue, un bug du site, un problème de paiement, une plainte ou un bannissement dans le chat client, une alerte détaillée apparaît automatiquement ici (et sur votre téléphone).
+              </p>
+            </div>
+          `
+          : `
+            <div class="ai-remarks-list">
+              ${filtered
+                .map((r) => {
+                  const cat = CAT_META[r.category] || CAT_META.other;
+                  const sev = SEV_META[r.severity] || SEV_META.medium;
+                  const isResolved = r.status === "resolved";
+                  const when = new Date(r.createdAt).toLocaleString("fr-FR", {
+                    day: "2-digit",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit"
+                  });
+                  const canUnban = r.category === "ai_ban" && r.banSnapshot && !r.banSnapshot.unbanned;
+                  return `
+                    <article class="ai-remark-card ${!r.read ? "is-unread" : ""} ${isResolved ? "is-resolved" : ""} ${r.category === "ai_ban" ? "is-ban-card" : ""}">
+                      <div class="remark-card-head">
+                        <div class="remark-pills-row">
+                          ${!r.read ? `<span class="remark-new-dot">NOUVEAU</span>` : ""}
+                          <span class="remark-cat-pill ${cat.cls}">${cat.label}</span>
+                          <span class="remark-sev-pill ${sev.cls}">Priorité : ${sev.label}</span>
+                          ${isResolved ? `<span class="diag-badge diag-resolved">✓ Traitée</span>` : ""}
+                        </div>
+                        <span class="text-subtle-sm">${when}${r.aiModel ? ` • 🤖 ${escapeHtml(r.aiModel)}` : ""}</span>
+                      </div>
+
+                      <h3 class="remark-card-title">${escapeHtml(r.title)}</h3>
+
+                      ${
+                        r.requestedProduct
+                          ? `<div class="remark-requested-product">🔎 Produit / service demandé : <strong>${escapeHtml(r.requestedProduct)}</strong></div>`
+                          : ""
+                      }
+
+                      <p class="remark-card-summary">${escapeHtml(r.summary)}</p>
+
+                      ${
+                        r.customerMessageExcerpt
+                          ? `<blockquote class="remark-customer-quote">« ${escapeHtml(r.customerMessageExcerpt)} »</blockquote>`
+                          : ""
+                      }
+
+                      <div class="remark-meta-row">
+                        <span>👤 <strong>${escapeHtml(r.customerName || "Visiteur")}</strong></span>
+                        ${r.customerEmail ? `<span>✉️ <code>${escapeHtml(r.customerEmail)}</code></span>` : ""}
+                        ${r.threadId ? `<span>💬 <code>${escapeHtml(r.threadId)}</code></span>` : ""}
+                        ${r.banSnapshot?.ipAddress ? `<span>🌐 IP : <code>${escapeHtml(r.banSnapshot.ipAddress)}</code></span>` : ""}
+                        ${r.banSnapshot?.unbanned ? `<span class="diag-badge diag-resolved">🔓 Client débanni</span>` : ""}
+                      </div>
+
+                      <div class="remark-card-actions">
+                        ${
+                          r.threadId
+                            ? `<button type="button" class="btn btn-secondary btn-xs" data-open-thread-from-remark="${escapeHtml(r.threadId)}" data-mark-read-remark="${escapeHtml(r.id)}">💬 Ouvrir discussion</button>`
+                            : ""
+                        }
+                        ${
+                          canUnban
+                            ? `<button type="button" class="btn btn-outline btn-xs" data-remark-unban="${escapeHtml(r.id)}">🔓 Débannir ce client</button>`
+                            : ""
+                        }
+                        <button type="button" class="btn btn-outline btn-xs" data-remark-status="${escapeHtml(r.id)}" data-next-status="${isResolved ? "new" : "resolved"}">
+                          ${isResolved ? "↺ Rouvrir" : "✓ Marquer traitée"}
+                        </button>
+                        <button type="button" class="btn btn-outline btn-xs danger-btn" data-remark-delete="${escapeHtml(r.id)}" aria-label="Supprimer cette remarque">🗑️</button>
+                      </div>
+                    </article>
+                  `;
+                })
+                .join("")}
+            </div>
+          `
+      }
+    `;
   }
 
   // ==========================================================================
@@ -2337,13 +2534,13 @@ class AdminController {
         <div class="integration-head-inline">
           <h2>🛡️ Liste Noire Anti-Fraude &amp; Journal Sécurité</h2>
           ${
-            (securityInfo?.blockedHashesCount || 0) + (securityInfo?.blockedFingerprintsCount || 0) > 0
-              ? `<button type="button" class="btn btn-outline btn-xs" id="btn-clear-blocked-hashes">Vider les empreintes bloquées (${(securityInfo?.blockedHashesCount || 0) + (securityInfo?.blockedFingerprintsCount || 0)})</button>`
+            (securityInfo?.blockedHashesCount || 0) + (securityInfo?.blockedFingerprintsCount || 0) + (securityInfo?.blockedIpsCount || 0) > 0
+              ? `<button type="button" class="btn btn-outline btn-xs" id="btn-clear-blocked-hashes">Vider les empreintes &amp; IP bloquées (${(securityInfo?.blockedHashesCount || 0) + (securityInfo?.blockedFingerprintsCount || 0) + (securityInfo?.blockedIpsCount || 0)})</button>`
               : ""
           }
         </div>
         <p style="font-size:0.8rem;color:var(--text-muted);">
-          Bloqués : <strong>${blockedEmails.length} e-mail(s)</strong> • <strong>${securityInfo?.blockedHashesCount || 0} réseau(x)</strong> • <strong>${securityInfo?.blockedFingerprintsCount || 0} appareil(s)</strong>
+          Bloqués : <strong>${blockedEmails.length} e-mail(s)</strong> • <strong>${securityInfo?.blockedIpsCount || 0} IP</strong> • <strong>${securityInfo?.blockedHashesCount || 0} réseau(x)</strong> • <strong>${securityInfo?.blockedFingerprintsCount || 0} appareil(s)</strong>
         </p>
         ${
           blockedEmails.length > 0
@@ -2452,6 +2649,95 @@ class AdminController {
         this.discFilter = btn.getAttribute("data-disc-filter");
         this.mobileDetailOpen = false;
         this.render();
+      });
+    });
+
+    // Remarques IA events
+    container.querySelectorAll("[data-remark-filter]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this.remarkFilter = btn.getAttribute("data-remark-filter") || "all";
+        this.render();
+      });
+    });
+
+    container.querySelector("#btn-remarks-read-all")?.addEventListener("click", async () => {
+      const resp = await fetch("/api/admin/ai-remarks/read-all", {
+        method: "POST",
+        headers: this.authHeaders()
+      });
+      if (resp.ok) {
+        showToast("Toutes les remarques IA ont été marquées comme lues.", "info", 2400);
+        await this.refreshDashboardSilently();
+        this.render();
+      }
+    });
+
+    container.querySelectorAll("[data-open-thread-from-remark]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const tid = btn.getAttribute("data-open-thread-from-remark");
+        const rid = btn.getAttribute("data-mark-read-remark");
+        if (rid) {
+          fetch(`/api/admin/ai-remarks/${encodeURIComponent(rid)}`, {
+            method: "PATCH",
+            headers: this.authHeaders(),
+            body: JSON.stringify({ read: true })
+          }).catch(() => {});
+        }
+        this.selectedThreadId = tid;
+        this.mobileDetailOpen = true;
+        this.activeTab = "discussions";
+        await this.refreshDashboardSilently();
+        this.render();
+      });
+    });
+
+    container.querySelectorAll("[data-remark-status]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const rid = btn.getAttribute("data-remark-status");
+        const nextStatus = btn.getAttribute("data-next-status") || "resolved";
+        const resp = await fetch(`/api/admin/ai-remarks/${encodeURIComponent(rid)}`, {
+          method: "PATCH",
+          headers: this.authHeaders(),
+          body: JSON.stringify({ status: nextStatus, read: true })
+        });
+        if (resp.ok) {
+          showToast(nextStatus === "resolved" ? "Remarque marquée comme traitée." : "Remarque rouverte.", "success", 2200);
+          await this.refreshDashboardSilently();
+          this.render();
+        }
+      });
+    });
+
+    container.querySelectorAll("[data-remark-unban]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const rid = btn.getAttribute("data-remark-unban");
+        if (!confirm("Débannir ce client (e-mail, IP, appareil, compte et discussion) ?")) return;
+        const resp = await fetch(`/api/admin/ai-remarks/${encodeURIComponent(rid)}/unban`, {
+          method: "POST",
+          headers: this.authHeaders()
+        });
+        if (resp.ok) {
+          showToast("🔓 Client débanni et accès rétabli !", "success", 3500);
+          await this.refreshDashboardSilently();
+          this.render();
+        } else {
+          showToast("Impossible de débannir ce client.", "error");
+        }
+      });
+    });
+
+    container.querySelectorAll("[data-remark-delete]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const rid = btn.getAttribute("data-remark-delete");
+        if (!confirm("Supprimer cette remarque IA ?")) return;
+        const resp = await fetch(`/api/admin/ai-remarks/${encodeURIComponent(rid)}`, {
+          method: "DELETE",
+          headers: this.authHeaders()
+        });
+        if (resp.ok) {
+          await this.refreshDashboardSilently();
+          this.render();
+        }
       });
     });
 

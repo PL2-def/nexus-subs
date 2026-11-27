@@ -5459,3 +5459,383 @@ dialog:modal.admin-modal-container {
   padding: 0.45rem 0.65rem;
   border-radius: var(--radius-sm);
 }
+
+/* ==========================================================================
+   Paiement sans compte, Affiches Produit dans le Chat, Ban IA & Remarques IA
+   ========================================================================== */
+.checkout-account-banner.guest-express {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.14), rgba(6, 182, 212, 0.1));
+  border-color: rgba(52, 211, 153, 0.42);
+  color: #ecfdf5;
+}
+
+.chat-bubble.msg-relay.relay-ban {
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.28), rgba(153, 27, 27, 0.24));
+  border: 1px solid rgba(248, 113, 113, 0.72);
+  color: #fef2f2;
+}
+
+.chat-bubble.msg-relay.relay-ban .chat-bubble-meta strong {
+  color: #fca5a5;
+}
+
+.pill-relay-ban {
+  background: rgba(220, 38, 38, 0.22) !important;
+  color: #fecaca !important;
+  border-color: rgba(248, 113, 113, 0.55) !important;
+}
+
+.disc-banned-banner {
+  padding: 0.85rem 1rem;
+  background: rgba(220, 38, 38, 0.16);
+  border-top: 1px solid rgba(248, 113, 113, 0.45);
+  color: #fecaca;
+  font-size: 0.84rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* Affiche Produit interactive envoyée par l'IA dans la discussion */
+.chat-posters-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 0.65rem;
+}
+
+.chat-product-poster {
+  position: relative;
+  border-radius: var(--radius-md);
+  padding: 0.85rem 0.95rem;
+  background:
+    radial-gradient(circle at top right, var(--poster-glow, rgba(139, 92, 246, 0.22)), transparent 65%),
+    rgba(10, 14, 28, 0.92);
+  border: 1px solid color-mix(in srgb, var(--poster-accent, #8b5cf6) 45%, rgba(255, 255, 255, 0.12));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  text-align: left;
+}
+
+.poster-top-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.poster-brand-icon {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45rem;
+  color: var(--poster-accent, #a78bfa);
+}
+
+.poster-brand-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.poster-heading-wrap {
+  min-width: 0;
+  flex: 1;
+}
+
+.poster-badges-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.2rem;
+}
+
+.poster-tag-badge {
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.12rem 0.45rem;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--poster-accent, #8b5cf6) 24%, transparent);
+  color: #fff;
+  border: 1px solid color-mix(in srgb, var(--poster-accent, #8b5cf6) 55%, transparent);
+}
+
+.poster-title {
+  font-size: 0.94rem;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1.2;
+}
+
+.poster-duration {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.poster-tagline {
+  font-size: 0.79rem;
+  color: var(--text-secondary);
+  line-height: 1.38;
+}
+
+.poster-features {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: #cbd5e1;
+}
+
+.poster-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding-top: 0.45rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.poster-price-box {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.poster-price-main {
+  font-size: 1.12rem;
+  font-weight: 900;
+  color: #fff;
+}
+
+.poster-price-old {
+  font-size: 0.78rem;
+  color: var(--text-subtle);
+  text-decoration: line-through;
+}
+
+.poster-save-chip {
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-full);
+  background: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+}
+
+.poster-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.admin-chat-posters-note {
+  margin-top: 0.4rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: var(--radius-sm);
+  background: rgba(124, 58, 237, 0.14);
+  border: 1px solid rgba(167, 139, 250, 0.32);
+  font-size: 0.75rem;
+  color: #e9d5ff;
+}
+
+/* Onglet Admin "🧠 Remarques IA" */
+.ai-remarks-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.ai-remarks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.ai-remark-card {
+  background: rgba(255, 255, 255, 0.028);
+  border: 1px solid var(--border-light);
+  border-left: 3px solid var(--accent-purple-light);
+  border-radius: var(--radius-lg);
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.ai-remark-card.is-unread {
+  background: rgba(124, 58, 237, 0.08);
+  border-color: rgba(167, 139, 250, 0.45);
+}
+
+.ai-remark-card.is-ban-card {
+  border-left-color: #ef4444;
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.ai-remark-card.is-resolved {
+  opacity: 0.72;
+  border-left-color: #10b981;
+}
+
+.remark-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.remark-pills-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.remark-new-dot {
+  font-size: 0.64rem;
+  font-weight: 900;
+  padding: 0.14rem 0.45rem;
+  border-radius: var(--radius-full);
+  background: var(--accent-purple);
+  color: #fff;
+  letter-spacing: 0.04em;
+}
+
+.remark-cat-pill,
+.remark-sev-pill {
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 0.18rem 0.55rem;
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+}
+
+.remark-cat-pill.cat-missing {
+  background: rgba(56, 189, 248, 0.16);
+  color: #7dd3fc;
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+.remark-cat-pill.cat-bug {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fecaca;
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.remark-cat-pill.cat-payment {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fde68a;
+  border-color: rgba(251, 191, 36, 0.48);
+}
+
+.remark-cat-pill.cat-complaint {
+  background: rgba(249, 115, 22, 0.2);
+  color: #fed7aa;
+  border-color: rgba(249, 115, 22, 0.48);
+}
+
+.remark-cat-pill.cat-pricing,
+.remark-cat-pill.cat-suggestion {
+  background: rgba(168, 85, 247, 0.18);
+  color: #e9d5ff;
+  border-color: rgba(192, 132, 252, 0.42);
+}
+
+.remark-cat-pill.cat-ban {
+  background: rgba(220, 38, 38, 0.28);
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.65);
+}
+
+.remark-cat-pill.cat-other {
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
+}
+
+.remark-sev-pill.sev-critical {
+  background: rgba(220, 38, 38, 0.24);
+  color: #fca5a5;
+}
+
+.remark-sev-pill.sev-high {
+  background: rgba(249, 115, 22, 0.2);
+  color: #fdba74;
+}
+
+.remark-sev-pill.sev-medium {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fcd34d;
+}
+
+.remark-sev-pill.sev-low {
+  background: rgba(16, 185, 129, 0.14);
+  color: #6ee7b7;
+}
+
+.remark-card-title {
+  font-size: 0.98rem;
+  color: #fff;
+}
+
+.remark-requested-product {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  align-self: flex-start;
+  padding: 0.28rem 0.65rem;
+  border-radius: var(--radius-sm);
+  background: rgba(6, 182, 212, 0.14);
+  border: 1px solid rgba(34, 211, 238, 0.38);
+  font-size: 0.78rem;
+  color: #cffafe;
+}
+
+.remark-card-summary {
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.remark-customer-quote {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-left: 2px solid rgba(167, 139, 250, 0.5);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 0.79rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.remark-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  font-size: 0.77rem;
+  color: var(--text-muted);
+}
+
+.remark-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  padding-top: 0.35rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}

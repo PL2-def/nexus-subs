@@ -401,9 +401,9 @@ export function renderCartDrawer() {
     </div>
 
     <button type="button" id="btn-drawer-checkout" class="btn btn-primary btn-checkout-lg">
-      <span>Passer au paiement sécurisé (${summary.total} €)</span>
+      <span>Payer sans compte (${summary.total} €)</span>
     </button>
-    <p class="drawer-pay-methods-note">🛡️ Livraison Sécurisée • Stripe • PayPal • SEPA QR</p>
+    <p class="drawer-pay-methods-note">⚡ Paiement sans compte • Stripe • PayPal • SEPA QR</p>
   `;
 
   itemsEl.querySelectorAll("[data-remove-cart]").forEach((btn) => {

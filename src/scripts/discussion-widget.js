@@ -5,7 +5,7 @@
  * - Gestion dynamique du clavier virtuel mobile via window.visualViewport
  */
 
-import { store } from "./store.js";
+import { store, getProductSvgIcon } from "./store.js";
 import { closeDialogSmoothly, showToast, playChime, escapeHtml } from "./mwg-helpers.js";
 import { account } from "./account.js";
 import { siteTracker } from "./site-tracker.js";
@@ -312,6 +312,9 @@ function getTopicSummaryText(focusedProduct) {
 }
 
 function renderRelayStatusPill(thread) {
+  if (thread?.bannedByAi) {
+    return `<span class="live-sync-pill pill-relay-ban">🚫 Accès suspendu</span>`;
+  }
   const ctrl = thread?.aiControl;
   if (!ctrl) {
     return `<span class="live-sync-pill"><span class="sync-dot"></span>Support 7j/7</span>`;
@@ -325,10 +328,72 @@ function renderRelayStatusPill(thread) {
   return `<span class="live-sync-pill pill-relay-human">👤 Conseiller actif</span>`;
 }
 
+function renderProductPosterCard(att) {
+  const accent = att.brandAccent || "#8B5CF6";
+  const glow = att.brandGlow || "rgba(139, 92, 246, 0.25)";
+  const iconSvg = getProductSvgIcon(att.id);
+  const isOut = att.availability === "out_of_stock" || (typeof att.stockCount === "number" && att.stockCount <= 0);
+  const stockLabel = isOut
+    ? "Rupture de stock"
+    : att.availability === "limited"
+    ? `Stock limité${typeof att.stockCount === "number" ? ` (${att.stockCount})` : ""}`
+    : "En stock • Immédiat";
+  const stockCls = isOut ? "stock-out" : att.availability === "limited" ? "stock-limited" : "stock-ok";
+  const savings =
+    att.compareAtPrice && Number(att.compareAtPrice) > Number(att.price)
+      ? Math.round(((Number(att.compareAtPrice) - Number(att.price)) / Number(att.compareAtPrice)) * 100)
+      : 0;
+  const feats = Array.isArray(att.features) ? att.features.slice(0, 3) : [];
+
+  return `
+    <div class="chat-product-poster" style="--poster-accent:${escapeHtml(accent)};--poster-glow:${escapeHtml(glow)};">
+      <div class="poster-top-row">
+        <div class="poster-brand-icon" aria-hidden="true">${iconSvg}</div>
+        <div class="poster-heading-wrap">
+          <div class="poster-badges-row">
+            ${att.badge ? `<span class="poster-tag-badge">${escapeHtml(att.badge)}</span>` : ""}
+            <span class="stock-pill ${stockCls}">${escapeHtml(stockLabel)}</span>
+          </div>
+          <h4 class="poster-title">${escapeHtml(att.title)}</h4>
+          <span class="poster-duration">${escapeHtml(att.duration || "12 Mois")}</span>
+        </div>
+      </div>
+
+      ${att.tagline ? `<p class="poster-tagline">${escapeHtml(att.tagline)}</p>` : ""}
+
+      ${
+        feats.length
+          ? `<ul class="poster-features">
+              ${feats.map((f) => `<li>✓ ${escapeHtml(f)}</li>`).join("")}
+            </ul>`
+          : ""
+      }
+
+      <div class="poster-footer-row">
+        <div class="poster-price-box">
+          <strong class="poster-price-main">${att.price} €</strong>
+          ${att.compareAtPrice ? `<span class="poster-price-old">${att.compareAtPrice} €</span>` : ""}
+          ${savings > 0 ? `<span class="poster-save-chip">-${savings}%</span>` : ""}
+        </div>
+        <div class="poster-actions">
+          <button type="button" class="btn btn-outline btn-xs" data-disc-detail="${escapeHtml(att.id)}">Voir la fiche</button>
+          ${
+            !isOut
+              ? `<button type="button" class="btn btn-primary btn-xs" data-disc-buy="${escapeHtml(att.id)}">⚡ Commander</button>`
+              : ""
+          }
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderMessageBubble(m) {
   const relayCls =
     m.sender === "relay"
-      ? m.relayEvent === "human_takeover"
+      ? m.relayEvent === "ai_ban"
+        ? "msg-relay relay-ban"
+        : m.relayEvent === "human_takeover"
         ? "msg-relay relay-human"
         : m.relayEvent === "ai_takeover" || m.relayEvent === "ai_resume"
         ? "msg-relay relay-ai"
@@ -352,7 +417,9 @@ function renderMessageBubble(m) {
       : m.sender === "ai"
       ? "🤖 Assistant IA NEXUS"
       : m.sender === "relay"
-      ? m.relayEvent === "human_takeover"
+      ? m.relayEvent === "ai_ban"
+        ? "🚫 MODÉRATION IA — ACCÈS BANNI"
+        : m.relayEvent === "human_takeover"
         ? "👤 REPRISE HUMAINE"
         : m.relayEvent === "ai_takeover" || m.relayEvent === "ai_resume"
         ? "🤖 RELAIS IA ACTIVÉ"
@@ -368,7 +435,7 @@ function renderMessageBubble(m) {
 
   let attachHtml = "";
   if (m.attachment?.type === "product") {
-    attachHtml = `
+    attachHtml += `
       <div class="chat-attached-card">
         <div>
           <strong>📦 ${escapeHtml(m.attachment.title)}</strong>
@@ -378,7 +445,7 @@ function renderMessageBubble(m) {
       </div>
     `;
   } else if (m.attachment?.type === "coupon") {
-    attachHtml = `
+    attachHtml += `
       <div class="chat-attached-card">
         <div>
           <strong>🏷️ Code Promo : <code>${escapeHtml(m.attachment.code)}</code></strong>
@@ -387,6 +454,13 @@ function renderMessageBubble(m) {
         <button type="button" class="btn btn-secondary btn-xs" data-copy-chat-coupon="${escapeHtml(m.attachment.code)}">Copier</button>
       </div>
     `;
+  }
+
+  if (Array.isArray(m.attachments) && m.attachments.length > 0) {
+    const posters = m.attachments.filter((a) => a && a.type === "product_poster");
+    if (posters.length > 0) {
+      attachHtml += `<div class="chat-posters-stack">${posters.map(renderProductPosterCard).join("")}</div>`;
+    }
   }
 
   return `
@@ -558,30 +632,40 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
       }
 
       <!-- Barre de saisie collée en bas -->
-      <form id="disc-send-form" class="disc-input-bar">
-        <input type="text" name="website_hp" class="visually-hidden" tabindex="-1" autocomplete="off" aria-hidden="true" />
-        <button
-          type="button"
-          id="btn-toggle-disc-suggest"
-          class="btn-disc-suggest-toggle ${suggestionsOpen ? "active" : ""}"
-          aria-expanded="${suggestionsOpen}"
-          title="Afficher / masquer les questions rapides"
-          aria-label="Afficher les questions rapides"
-        >💡</button>
-        <label for="disc-message-input" class="visually-hidden">Votre message</label>
-        <input
-          type="text"
-          id="disc-message-input"
-          class="form-control"
-          placeholder="Écrivez votre message..."
-          value="${escapeHtml(draftMsg)}"
-          autocomplete="off"
-          required
-        />
-        <button type="submit" id="btn-disc-send" class="btn btn-primary">
-          <span>Envoyer</span>
-        </button>
-      </form>
+      ${
+        activeThread?.bannedByAi
+          ? `
+            <div class="disc-banned-banner" role="alert">
+              🚫 <strong>Accès suspendu par la modération automatique.</strong> Vous ne pouvez plus envoyer de messages sur cette discussion.
+            </div>
+          `
+          : `
+            <form id="disc-send-form" class="disc-input-bar">
+              <input type="text" name="website_hp" class="visually-hidden" tabindex="-1" autocomplete="off" aria-hidden="true" />
+              <button
+                type="button"
+                id="btn-toggle-disc-suggest"
+                class="btn-disc-suggest-toggle ${suggestionsOpen ? "active" : ""}"
+                aria-expanded="${suggestionsOpen}"
+                title="Afficher / masquer les questions rapides"
+                aria-label="Afficher les questions rapides"
+              >💡</button>
+              <label for="disc-message-input" class="visually-hidden">Votre message</label>
+              <input
+                type="text"
+                id="disc-message-input"
+                class="form-control"
+                placeholder="Écrivez votre message..."
+                value="${escapeHtml(draftMsg)}"
+                autocomplete="off"
+                required
+              />
+              <button type="submit" id="btn-disc-send" class="btn btn-primary">
+                <span>Envoyer</span>
+              </button>
+            </form>
+          `
+      }
     </div>
   `;
 
@@ -641,6 +725,15 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
       } else {
         showToast(res.message, "error");
       }
+    });
+  });
+
+  container.querySelectorAll("[data-disc-detail]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const pid = btn.getAttribute("data-disc-detail");
+      if (!pid) return;
+      await closeDialogSmoothly(dialog);
+      window.openProductDetailModal?.(pid);
     });
   });
 

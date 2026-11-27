@@ -251,6 +251,7 @@ function createDefaultStore() {
       blockedEmails: [],
       blockedHashes: [],
       blockedFingerprints: [],
+      blockedIps: [],
       trustedEmails: [],
       trustedUserIds: [],
       securityEvents: []
@@ -333,6 +334,7 @@ function createDefaultStore() {
     discussions: [],
     rescueClaims: [],
     lossReports: [],
+    aiRemarks: [],
     supportMessages: [],
     newsletter: [],
     notifications: [
@@ -439,6 +441,7 @@ class StoreDB {
             blockedEmails: Array.isArray(parsed.security?.blockedEmails) ? parsed.security.blockedEmails : [],
             blockedHashes: Array.isArray(parsed.security?.blockedHashes) ? parsed.security.blockedHashes : [],
             blockedFingerprints: Array.isArray(parsed.security?.blockedFingerprints) ? parsed.security.blockedFingerprints : [],
+            blockedIps: Array.isArray(parsed.security?.blockedIps) ? parsed.security.blockedIps : [],
             trustedEmails: Array.isArray(parsed.security?.trustedEmails) ? parsed.security.trustedEmails : [],
             trustedUserIds: Array.isArray(parsed.security?.trustedUserIds) ? parsed.security.trustedUserIds : [],
             securityEvents: Array.isArray(parsed.security?.securityEvents) ? parsed.security.securityEvents : []
@@ -452,6 +455,7 @@ class StoreDB {
           discussions: Array.isArray(parsed.discussions) ? parsed.discussions : [],
           rescueClaims: Array.isArray(parsed.rescueClaims) ? parsed.rescueClaims : [],
           lossReports: Array.isArray(parsed.lossReports) ? parsed.lossReports : [],
+          aiRemarks: Array.isArray(parsed.aiRemarks) ? parsed.aiRemarks : [],
           settings: {
             ...defaults.settings,
             ...(parsed.settings || {}),

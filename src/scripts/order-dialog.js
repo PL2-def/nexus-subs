@@ -445,7 +445,9 @@ function renderLiveOrderContent({ preserveChatInput = false } = {}) {
             .map((m) => {
               const relayCls =
                 m.sender === "relay"
-                  ? m.relayEvent === "human_takeover"
+                  ? m.relayEvent === "ai_ban"
+                    ? "msg-relay relay-ban"
+                    : m.relayEvent === "human_takeover"
                     ? "msg-relay relay-human"
                     : m.relayEvent === "ai_takeover" || m.relayEvent === "ai_resume"
                     ? "msg-relay relay-ai"
@@ -467,7 +469,9 @@ function renderLiveOrderContent({ preserveChatInput = false } = {}) {
                   : m.sender === "ai"
                   ? "🤖 Assistant IA NEXUS"
                   : m.sender === "relay"
-                  ? m.relayEvent === "human_takeover"
+                  ? m.relayEvent === "ai_ban"
+                    ? "🚫 Modération IA — Accès banni"
+                    : m.relayEvent === "human_takeover"
                     ? "👤 Relais Humain"
                     : m.relayEvent === "ai_takeover" || m.relayEvent === "ai_resume"
                     ? "🤖 Relais IA Activé"
@@ -479,6 +483,15 @@ function renderLiveOrderContent({ preserveChatInput = false } = {}) {
                 hour: "2-digit",
                 minute: "2-digit"
               });
+              const postersHtml = Array.isArray(m.attachments)
+                ? m.attachments
+                    .filter((a) => a?.type === "product_poster")
+                    .map(
+                      (a) =>
+                        `<div class="chat-attached-card"><div><strong>📦 ${escapeHtml(a.title)}</strong><span>${escapeHtml(a.duration || "12 Mois")} • <strong>${a.price} €</strong></span></div></div>`
+                    )
+                    .join("")
+                : "";
               return `
                 <div class="chat-bubble ${roleClass}">
                   <div class="chat-bubble-meta">
@@ -486,6 +499,7 @@ function renderLiveOrderContent({ preserveChatInput = false } = {}) {
                     <span>${time}</span>
                   </div>
                   <div class="chat-bubble-text">${escapeHtml(m.text)}</div>
+                  ${postersHtml}
                 </div>
               `;
             })
