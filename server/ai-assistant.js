@@ -635,7 +635,7 @@ async function generateAndPostAiReply(threadId, expectedVersion) {
       executeAiBanOnThread(freshThread, actions.ban.reason, result.model);
     }
 
-    db.save();
+    db.save({ immediate: true });
     broadcastThreadUpdate(freshThread, "new_message");
   } finally {
     if (inFlightVersion.get(threadId) === expectedVersion) {
@@ -701,7 +701,7 @@ async function executeAiTakeover(threadId, expectedVersion) {
   thread.unreadByCustomer = (thread.unreadByCustomer || 0) + 1;
 
   syncRelayOrAiMessageToLinkedOrder(thread, relayMsg);
-  db.save();
+  db.save({ immediate: true });
   broadcastThreadUpdate(thread, "new_message");
 
   await generateAndPostAiReply(thread.threadId, ctrl.relayVersion);

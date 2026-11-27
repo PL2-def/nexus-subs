@@ -4,7 +4,7 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { db, hashPassword, verifyPassword, dummyPasswordCheck } from "./db.js";
-import { remoteEnabled, isRemoteRestored, restoreFromRemote } from "./remote-store.js";
+import { remoteEnabled, isRemoteRestored, restoreFromRemote, flushRemote } from "./remote-store.js";
 import {
   getPrivacyClientHash,
   signOrderRescueProof,
@@ -638,7 +638,7 @@ app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), asyn
   }
 });
 
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "5mb" }));
 
 // ============================================================================
 // Public Storefront Routes
@@ -2187,7 +2187,7 @@ app.post("/api/orders/:orderId/messages", chatLimiter, async (req, res) => {
 
   order.messages.push(msg);
   order.updatedAt = new Date().toISOString();
-  db.save();
+  db.save({ immediate: true });
 
   // Synchroniser aussi avec le Menu "Discussions" de l'Admin !
   syncOrderMessageToDiscussion(order, sender, cleanText);
@@ -2351,7 +2351,7 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
       onCustomerMessageInThread(thread, { isNewThread: false });
     }
 
-    db.save();
+    db.save({ immediate: true });
 
     const diag = computeDiscussionDiagnostics(thread, db.data.orders, getDiagnosticContext());
     const alertPrefix = diag.flagIds.includes("fraud_critical")
@@ -2771,7 +2771,7 @@ app.post("/api/discussions/:threadId/messages", chatLimiter, async (req, res) =>
     onCustomerMessageInThread(thread, { isNewThread: false });
   }
 
-  db.save();
+  db.save({ immediate: true });
 
   if (!isAdmin) {
     const diag = computeDiscussionDiagnostics(thread, db.data.orders, getDiagnosticContext());
@@ -3134,6 +3134,7 @@ app.get("/api/admin/dashboard", requireAdmin, async (_req, res) => {
     supportMessages: db.data.supportMessages,
     newsletter: db.data.newsletter,
     notifications: db.data.notifications,
+    persistence: db.getPersistenceSummary(),
     ntfyInfo,
     settings: {
       storeName: s.storeName,
@@ -3951,16 +3952,56 @@ app.put("/api/admin/settings", requireAdmin, async (req, res) => {
       db.data.admin.passwordSalt = salt;
       db.data.admin.passwordHash = hash;
       const currentToken = extractAdminToken(req);
-      for (const tok of db.sessions.keys()) {
-        if (tok !== currentToken) db.sessions.delete(tok);
-      }
+      db.revokeOtherAdminSessions(currentToken);
     }
   }
 
-  db.save();
+  db.save({ immediate: true });
+  await flushRemote().catch(() => {});
   broadcastCatalog();
   const ntfyInfo = await generateNtfyQrDataUrl();
-  res.json({ ok: true, ntfyInfo });
+  res.json({ ok: true, ntfyInfo, persistence: db.getPersistenceSummary() });
+});
+
+app.post("/api/admin/persistence/sync", requireAdmin, async (req, res) => {
+  try {
+    db.save({ immediate: true });
+    await flushRemote();
+    const persistence = db.getPersistenceSummary();
+    res.json({ ok: !persistence.lastSyncError, persistence });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message, persistence: db.getPersistenceSummary() });
+  }
+});
+
+app.get("/api/admin/persistence/export", requireAdmin, (req, res) => {
+  const snapshot = db.exportBackupSnapshot();
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="nexus-backup-${stamp}.json"`);
+  res.send(JSON.stringify(snapshot, null, 2));
+});
+
+app.post("/api/admin/persistence/import", requireAdmin, async (req, res) => {
+  try {
+    const { backup, mode = "merge" } = req.body || {};
+    if (!backup || typeof backup !== "object") {
+      return res.status(400).json({ error: "Données de sauvegarde manquantes." });
+    }
+    db.importBackupSnapshot(backup, { mode: mode === "replace" ? "replace" : "merge" });
+    await flushRemote().catch(() => {});
+    broadcastCatalog();
+    broadcastAdmin("notification", {
+      notification: db.addNotification({
+        type: "system",
+        title: "♻️ Sauvegarde restaurée",
+        message: "Messages, commandes et clés ont été restaurés et synchronisés."
+      })
+    });
+    res.json({ ok: true, persistence: db.getPersistenceSummary() });
+  } catch (err) {
+    res.status(400).json({ error: err.message || "Échec de l'importation de la sauvegarde." });
+  }
 });
 
 app.post("/api/admin/test-notification", requireAdmin, async (req, res) => {
@@ -3995,7 +4036,7 @@ function maskSecret(val) {
 }
 
 // Si le serveur est lancé directement via `node server/index.js` sur Render sans passer par `start.js`,
-// restaurer quand même le dépôt distant avant d'accepter des requêtes.
+// restaurer quand même le dépôt distant avant d'accepter des requêtes ET flusher proprement à l'arrêt.
 if (remoteEnabled && !isRemoteRestored()) {
   try {
     await restoreFromRemote();
@@ -4003,6 +4044,21 @@ if (remoteEnabled && !isRemoteRestored()) {
   } catch (err) {
     console.error("[NEXUS API] Erreur restauration distante au démarrage:", err.message);
   }
+  let directShuttingDown = false;
+  const directShutdown = async (signal) => {
+    if (directShuttingDown) return;
+    directShuttingDown = true;
+    console.log(`[NEXUS API] ${signal} reçu → synchronisation finale des données…`);
+    try {
+      await Promise.race([flushRemote(), new Promise((r) => setTimeout(r, 15_000))]);
+    } catch {
+      // ignore
+    } finally {
+      process.exit(0);
+    }
+  };
+  process.on("SIGTERM", () => directShutdown("SIGTERM"));
+  process.on("SIGINT", () => directShutdown("SIGINT"));
 }
 
 initAiAssistant({

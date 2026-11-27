@@ -26,16 +26,48 @@ const DATA_DIR = path.resolve(__dirname, "..", "data");
 const REPO = (process.env.GITHUB_DATA_REPO || "").trim();
 const TOKEN = (process.env.GITHUB_DATA_TOKEN || "").trim();
 const BRANCH = (process.env.GITHUB_DATA_BRANCH || "main").trim();
-const DEBOUNCE_MS = Number(process.env.GITHUB_DATA_DEBOUNCE_MS) || 4000;
+const DEBOUNCE_MS = Number(process.env.GITHUB_DATA_DEBOUNCE_MS) || 1500;
 const RETRY_MS = 15_000;
 
-export const SYNCED_FILES = ["nexus-store.json", "orders-rescue.jsonl"];
+// `.vault-key` est restauré EN PREMIER pour garantir que la clé de chiffrement AES-256
+// soit toujours identique après chaque redéploiement (même si VAULT_SECRET_KEY n'est pas défini).
+export const SYNCED_FILES = [".vault-key", "nexus-store.json", "orders-rescue.jsonl"];
 export const remoteEnabled = Boolean(REPO && TOKEN);
 
 let restored = false;
+let lastRestoreAt = null;
+let lastSyncAt = null;
+let lastSyncError = "";
+let syncCount = 0;
+const conflictMergers = new Map();
+
 export function isRemoteRestored() {
   return restored;
 }
+
+export function registerConflictMerger(name, fn) {
+  if (typeof fn === "function") conflictMergers.set(name, fn);
+}
+
+export function getRemoteStoreStatus() {
+  const pendingFiles = [];
+  for (const name of SYNCED_FILES) {
+    const s = states.get(name);
+    if (s && (s.dirty || s.inFlight || s.timer)) pendingFiles.push(name);
+  }
+  return {
+    remoteEnabled,
+    repo: REPO || "",
+    branch: BRANCH,
+    restored,
+    lastRestoreAt,
+    lastSyncAt,
+    lastSyncError,
+    syncCount,
+    pendingFiles
+  };
+}
+
 const states = new Map();
 
 function st(name) {
@@ -130,14 +162,17 @@ export async function restoreFromRemote() {
   }
 
   restored = true;
+  lastRestoreAt = new Date().toISOString();
+  lastSyncError = "";
   for (const name of SYNCED_FILES) {
     if (st(name).dirty) scheduleRemoteSync(name);
   }
 }
 
-async function putFile(name, b64) {
+async function putFile(name, initialB64) {
   const s = st(name);
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  let b64 = initialB64;
+  for (let attempt = 1; attempt <= 4; attempt++) {
     const body = {
       message: `data: sync ${name} (${new Date().toISOString()})`,
       content: b64,
@@ -148,12 +183,26 @@ async function putFile(name, b64) {
     if (res.ok) {
       const json = await res.json();
       s.sha = json?.content?.sha || null;
-      return;
+      lastSyncAt = new Date().toISOString();
+      lastSyncError = "";
+      syncCount += 1;
+      return b64;
     }
-    // SHA périmé / manquant : on relit le SHA distant puis on réessaie.
+    // SHA périmé / conflit de déploiement chevauchant : on fusionne intelligemment avant de réessayer !
     if (res.status === 409 || res.status === 422) {
       const remote = await fetchRemoteFile(name).catch(() => null);
       s.sha = remote?.sha || null;
+      const merger = conflictMergers.get(name);
+      if (merger && remote?.buffer) {
+        try {
+          const mergedBuf = merger(remote.buffer);
+          if (mergedBuf && Buffer.isBuffer(mergedBuf)) {
+            b64 = mergedBuf.toString("base64");
+          }
+        } catch (mergeErr) {
+          console.error(`[RemoteStore] Erreur fusion conflit ${name}:`, mergeErr.message);
+        }
+      }
       continue;
     }
     throw new Error(`GitHub PUT ${name} → HTTP ${res.status} ${await res.text().catch(() => "")}`.slice(0, 300));
@@ -175,9 +224,10 @@ function pushFile(name) {
       const b64 = fs.readFileSync(localPath).toString("base64");
       if (b64 === s.lastB64) continue;
       try {
-        await putFile(name, b64);
-        s.lastB64 = b64;
+        const pushedB64 = await putFile(name, b64);
+        s.lastB64 = pushedB64 || b64;
       } catch (err) {
+        lastSyncError = err.message;
         console.error(`[RemoteStore] Échec synchronisation ${name} :`, err.message);
         s.dirty = true;
         if (!s.timer) {
@@ -206,6 +256,18 @@ export function scheduleRemoteSync(name) {
     s.timer = null;
     pushFile(name);
   }, DEBOUNCE_MS);
+}
+
+/** Pousse immédiatement un fichier critique (messages, clés, commandes) sans attendre le debounce. */
+export function scheduleImmediateSync(name) {
+  if (!remoteEnabled || !restored) return Promise.resolve();
+  const s = st(name);
+  s.dirty = true;
+  if (s.timer) {
+    clearTimeout(s.timer);
+    s.timer = null;
+  }
+  return pushFile(name);
 }
 
 /** Pousse immédiatement toutes les modifications en attente (avant arrêt). */

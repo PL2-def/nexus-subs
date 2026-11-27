@@ -737,7 +737,7 @@ class AdminController {
     if (this.activeTab === "orders") return this.renderOrdersTab(d.orders, d.stats);
     if (this.activeTab === "customers") return this.renderCustomersAntiFraudTab(d);
     if (this.activeTab === "catalog") return this.renderCatalogTab(d.products);
-    if (this.activeTab === "integrations") return this.renderIntegrationsTab(d.settings, d.ntfyInfo, d.admin, d.security);
+    if (this.activeTab === "integrations") return this.renderIntegrationsTab(d.settings, d.ntfyInfo, d.admin, d.security, d.persistence);
     return this.renderCouponsTab(d.coupons);
   }
 
@@ -2272,11 +2272,67 @@ class AdminController {
   // ==========================================================================
   // TÉLÉPHONE, PAIEMENTS & SÉCURITÉ ADMIN
   // ==========================================================================
-  renderIntegrationsTab(s, ntfyInfo, adminInfo, securityInfo) {
+  renderIntegrationsTab(s, ntfyInfo, adminInfo, securityInfo, persistence = null) {
     const blockedEmails = securityInfo?.blockedEmails || [];
     const secEvents = securityInfo?.recentEvents || [];
+    const p = persistence || {};
+    const pCounts = p.counts || {};
+    const syncTime = p.lastSyncAt
+      ? new Date(p.lastSyncAt).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      : "En attente";
+    const keyList = Array.isArray(pCounts.configuredKeys) && pCounts.configuredKeys.length > 0
+      ? pCounts.configuredKeys.join(" • ")
+      : "Aucune clé secrète enregistrée";
 
     return `
+      <!-- Panneau Persistance Cloud & Sauvegarde des Messages et Clés -->
+      <div class="integration-panel persistence-panel ${p.remoteEnabled && !p.lastSyncError ? "is-ok" : "is-warn"}" style="margin-bottom:1.15rem;">
+        <div class="integration-head-inline">
+          <div>
+            <span class="legal-tag">${p.remoteEnabled ? "☁️ Persistance GitHub Privée Active" : "⚠️ Stockage Local Uniquement"}</span>
+            <h2 style="margin-top:0.25rem;">💾 Persistance des Messages, Commandes &amp; Clés API</h2>
+          </div>
+          <div style="display:flex;gap:0.45rem;flex-wrap:wrap;">
+            <button type="button" class="btn btn-primary btn-xs" id="btn-persistence-sync">☁️ Synchroniser maintenant</button>
+            <button type="button" class="btn btn-outline btn-xs" id="btn-persistence-export">⬇️ Exporter (.json)</button>
+            <label class="btn btn-outline btn-xs" style="cursor:pointer;margin:0;">
+              ⬆️ Importer (.json)
+              <input type="file" id="input-persistence-import" accept="application/json,.json" class="visually-hidden" />
+            </label>
+          </div>
+        </div>
+
+        <div class="persistence-stats-row">
+          <div class="persistence-chip"><span>Dépôt distant</span><strong>${p.remoteEnabled ? escapeHtml(`${p.repo}@${p.branch || "main"}`) : "Non configuré"}</strong></div>
+          <div class="persistence-chip"><span>Dernière synchro</span><strong>${escapeHtml(syncTime)} (${p.syncCount || 0})</strong></div>
+          <div class="persistence-chip"><span>Clé Coffre AES-256</span><strong>${escapeHtml(p.vaultKeySource || "Locale")}</strong></div>
+          <div class="persistence-chip"><span>Messages / Discussions</span><strong>${pCounts.totalMessages ?? 0} msg • ${pCounts.discussions ?? 0} fils</strong></div>
+          <div class="persistence-chip"><span>Clés protégées</span><strong>${escapeHtml(keyList)}</strong></div>
+        </div>
+
+        ${
+          !p.remoteEnabled
+            ? `<div class="ai-error-banner" style="margin-top:0.65rem;">
+                ⚠️ <strong>Persistance distante non activée :</strong> sur Render Free, le disque est réinitialisé à chaque redéploiement. Ajoutez <code>GITHUB_DATA_REPO</code> (ex: <code>PL2-def/nexus-subs-data</code>) et <code>GITHUB_DATA_TOKEN</code> dans les variables d'environnement Render pour ne plus jamais perdre vos messages ni vos clés !
+              </div>`
+            : ""
+        }
+        ${
+          p.lastSyncError
+            ? `<div class="ai-error-banner" style="margin-top:0.65rem;">
+                🚨 <strong>Erreur de synchronisation GitHub :</strong> ${escapeHtml(p.lastSyncError)}
+              </div>`
+            : ""
+        }
+        ${
+          Array.isArray(p.decryptionWarnings) && p.decryptionWarnings.length > 0
+            ? `<div class="ai-error-banner" style="margin-top:0.65rem;">
+                🔐 <strong>Alerte clé de chiffrement :</strong> ${p.decryptionWarnings.length} secret(s) n'ont pas pu être déchiffrés mais leurs données chiffrées ont été <strong>préservées intactes</strong>. Vérifiez <code>VAULT_SECRET_KEY</code> ou ressaisissez la clé ci-dessous puis enregistrez.
+              </div>`
+            : ""
+        }
+      </div>
+
       <form id="admin-settings-master-form" class="admin-integrations-stack">
         <div class="integration-panel highlight-integration">
           <div class="integration-head">
@@ -3270,6 +3326,86 @@ class AdminController {
         await this.refreshDashboardSilently();
         this.render();
       });
+    });
+
+    // Persistance : Synchronisation immédiate, Export & Import JSON
+    container.querySelector("#btn-persistence-sync")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = "⏳ Synchronisation...";
+      try {
+        const resp = await fetch("/api/admin/persistence/sync", {
+          method: "POST",
+          headers: this.authHeaders()
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.ok) {
+          showToast(
+            data.persistence?.remoteEnabled
+              ? "☁️ Messages, commandes et clés synchronisés sur GitHub !"
+              : "💾 Données sauvegardées sur disque local (activez GITHUB_DATA_TOKEN sur Render pour la synchro cloud).",
+            "success",
+            4500
+          );
+        } else {
+          showToast(`Erreur synchro : ${data.error || data.persistence?.lastSyncError || "échec"}`, "error", 5500);
+        }
+        await this.refreshDashboardSilently();
+        this.render();
+      } catch {
+        showToast("Erreur réseau pendant la synchronisation.", "error");
+        btn.disabled = false;
+        btn.textContent = "☁️ Synchroniser maintenant";
+      }
+    });
+
+    container.querySelector("#btn-persistence-export")?.addEventListener("click", async () => {
+      try {
+        const resp = await fetch("/api/admin/persistence/export", {
+          headers: { Authorization: `Bearer ${this.token}` }
+        });
+        if (!resp.ok) throw new Error("Export impossible.");
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `nexus-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        showToast("⬇️ Sauvegarde complète (.json) téléchargée !", "success", 3500);
+      } catch (err) {
+        showToast(err.message || "Erreur lors de l'export.", "error");
+      }
+    });
+
+    container.querySelector("#input-persistence-import")?.addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const backup = JSON.parse(text);
+        if (!confirm(`Restaurer et fusionner la sauvegarde « ${file.name} » (messages, discussions, commandes et clés) ?`)) {
+          e.target.value = "";
+          return;
+        }
+        const resp = await fetch("/api/admin/persistence/import", {
+          method: "POST",
+          headers: this.authHeaders(),
+          body: JSON.stringify({ backup, mode: "merge" })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || "Importation refusée.");
+        showToast("♻️ Sauvegarde restaurée et synchronisée avec succès !", "success", 4500);
+        await store.initBootstrap();
+        await this.refreshDashboardSilently();
+        this.render();
+      } catch (err) {
+        showToast(`Erreur import : ${err.message}`, "error", 5500);
+      } finally {
+        e.target.value = "";
+      }
     });
 
     // Test connexion IA Gemini

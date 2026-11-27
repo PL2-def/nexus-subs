@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { scheduleRemoteSync } from "./remote-store.js";
+import { scheduleRemoteSync, scheduleImmediateSync, remoteEnabled } from "./remote-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.resolve(__dirname, "..", "data");
@@ -10,25 +10,93 @@ const BACKUP_DIR = path.join(DATA_DIR, "backups");
 const KEY_FILE = path.join(DATA_DIR, ".vault-key");
 const RESCUE_LEDGER_FILE = path.join(DATA_DIR, "orders-rescue.jsonl");
 
-function loadOrCreateMasterKey() {
-  if (process.env.VAULT_SECRET_KEY && process.env.VAULT_SECRET_KEY.length >= 32) {
-    return crypto.createHash("sha256").update(process.env.VAULT_SECRET_KEY).digest();
+let MASTER_KEY = null;
+let MASTER_KEY_SOURCE = "unknown";
+let CANDIDATE_KEYS = [];
+
+function readVaultKeyFileBuffer() {
+  try {
+    if (!fs.existsSync(KEY_FILE)) return null;
+    const hex = fs.readFileSync(KEY_FILE, "utf8").trim();
+    if (/^[0-9a-f]{64}$/i.test(hex)) {
+      return Buffer.from(hex, "hex");
+    }
+  } catch {
+    // ignore
   }
+  return null;
+}
+
+function getDerivedRemoteKeyBuffer() {
+  const repo = String(process.env.GITHUB_DATA_REPO || "").trim();
+  const token = String(process.env.GITHUB_DATA_TOKEN || "").trim();
+  if (!repo || !token) return null;
+  return crypto.createHash("sha256").update(`nexus-vault:v1:${repo}:${token}`).digest();
+}
+
+/**
+ * Recharge la clé maître AES-256 et toutes les clés candidates de déchiffrement.
+ * Doit être ré-exécutée après restoreFromRemote() pour prendre en compte `.vault-key` restauré.
+ */
+export function reloadMasterKey() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
-  if (fs.existsSync(KEY_FILE)) {
-    const hex = fs.readFileSync(KEY_FILE, "utf8").trim();
-    if (hex.length === 64) {
-      return Buffer.from(hex, "hex");
+
+  const envSecret = String(process.env.VAULT_SECRET_KEY || "").trim();
+  const envKey = envSecret.length >= 8 ? crypto.createHash("sha256").update(envSecret).digest() : null;
+  let fileKey = readVaultKeyFileBuffer();
+  const derivedKey = getDerivedRemoteKeyBuffer();
+
+  if (envKey) {
+    MASTER_KEY = envKey;
+    MASTER_KEY_SOURCE = "env:VAULT_SECRET_KEY";
+  } else if (fileKey) {
+    MASTER_KEY = fileKey;
+    MASTER_KEY_SOURCE = remoteEnabled ? "file:.vault-key (sync)" : "file:.vault-key";
+  } else if (derivedKey) {
+    MASTER_KEY = derivedKey;
+    MASTER_KEY_SOURCE = "derived:GITHUB_DATA_TOKEN";
+    try {
+      fs.writeFileSync(KEY_FILE, derivedKey.toString("hex"), { encoding: "utf8", mode: 0o600 });
+      fileKey = derivedKey;
+      scheduleImmediateSync(".vault-key");
+    } catch {
+      // ignore
+    }
+  } else {
+    const generated = crypto.randomBytes(32);
+    fs.writeFileSync(KEY_FILE, generated.toString("hex"), { encoding: "utf8", mode: 0o600 });
+    MASTER_KEY = generated;
+    fileKey = generated;
+    MASTER_KEY_SOURCE = remoteEnabled ? "file:.vault-key (sync)" : "file:.vault-key";
+    if (remoteEnabled) scheduleImmediateSync(".vault-key");
+  }
+
+  const seen = new Set();
+  const candidates = [];
+  for (const k of [MASTER_KEY, envKey, fileKey, derivedKey]) {
+    if (!k) continue;
+    const hex = k.toString("hex");
+    if (!seen.has(hex)) {
+      seen.add(hex);
+      candidates.push(k);
     }
   }
-  const key = crypto.randomBytes(32);
-  fs.writeFileSync(KEY_FILE, key.toString("hex"), { encoding: "utf8", mode: 0o600 });
-  return key;
+  CANDIDATE_KEYS = candidates;
+  return MASTER_KEY;
 }
 
-const MASTER_KEY = loadOrCreateMasterKey();
+export function getMasterKeyInfo() {
+  return {
+    source: MASTER_KEY_SOURCE,
+    hasEnvVaultKey: String(process.env.VAULT_SECRET_KEY || "").trim().length >= 8,
+    hasVaultFile: fs.existsSync(KEY_FILE),
+    candidateCount: CANDIDATE_KEYS.length
+  };
+}
+
+reloadMasterKey();
 
 /**
  * Chiffrement authentifié AES-256-GCM au repos pour protéger la confidentialité
@@ -45,38 +113,55 @@ export function encryptText(plainText) {
   return `enc:v1:${iv.toString("hex")}:${tag.toString("hex")}:${encrypted.toString("hex")}`;
 }
 
-export function decryptText(value) {
+export function decryptTextDetailed(value) {
   const str = String(value ?? "");
-  if (!str || !str.startsWith("enc:v1:")) return str;
-  try {
-    const parts = str.split(":");
-    if (parts.length !== 5) return "";
-    const iv = Buffer.from(parts[2], "hex");
-    const tag = Buffer.from(parts[3], "hex");
-    const encrypted = Buffer.from(parts[4], "hex");
-    const decipher = crypto.createDecipheriv("aes-256-gcm", MASTER_KEY, iv);
-    decipher.setAuthTag(tag);
-    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
-  } catch {
-    return "";
+  if (!str || !str.startsWith("enc:v1:")) {
+    return { ok: true, value: str, migrated: false };
   }
+  const parts = str.split(":");
+  if (parts.length !== 5) return { ok: false, value: "", raw: str, migrated: false };
+  const iv = Buffer.from(parts[2], "hex");
+  const tag = Buffer.from(parts[3], "hex");
+  const encrypted = Buffer.from(parts[4], "hex");
+
+  for (let i = 0; i < CANDIDATE_KEYS.length; i++) {
+    try {
+      const decipher = crypto.createDecipheriv("aes-256-gcm", CANDIDATE_KEYS[i], iv);
+      decipher.setAuthTag(tag);
+      const plain = Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+      return { ok: true, value: plain, migrated: i > 0 };
+    } catch {
+      // essayer la clé candidate suivante
+    }
+  }
+  return { ok: false, value: "", raw: str, migrated: false };
+}
+
+export function decryptText(value) {
+  return decryptTextDetailed(value).value;
 }
 
 export function encryptObject(obj) {
   if (!obj) return null;
+  if (typeof obj === "string" && obj.startsWith("enc:v1:")) return obj;
   return encryptText(JSON.stringify(obj));
 }
 
-export function decryptObject(val) {
-  if (!val) return null;
-  if (typeof val === "object") return val;
-  const json = decryptText(val);
-  if (!json) return null;
+export function decryptObjectDetailed(val) {
+  if (!val) return { ok: true, value: null, migrated: false };
+  if (typeof val === "object") return { ok: true, value: val, migrated: false };
+  const res = decryptTextDetailed(val);
+  if (!res.ok) return { ok: false, value: null, raw: res.raw, migrated: false };
+  if (!res.value) return { ok: true, value: null, migrated: res.migrated };
   try {
-    return JSON.parse(json);
+    return { ok: true, value: JSON.parse(res.value), migrated: res.migrated };
   } catch {
-    return null;
+    return { ok: false, value: null, raw: String(val), migrated: false };
   }
+}
+
+export function decryptObject(val) {
+  return decryptObjectDetailed(val).value;
 }
 
 /**

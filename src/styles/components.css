@@ -5839,3 +5839,44 @@ dialog:modal.admin-modal-container {
   padding-top: 0.35rem;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
+
+/* Panneau Persistance Cloud & Sauvegarde Admin */
+.persistence-panel.is-ok {
+  border-color: rgba(16, 185, 129, 0.45);
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(6, 182, 212, 0.05));
+}
+
+.persistence-panel.is-warn {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.09), rgba(239, 68, 68, 0.05));
+}
+
+.persistence-stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: 0.55rem;
+  margin-top: 0.7rem;
+}
+
+.persistence-chip {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.14rem;
+}
+
+.persistence-chip > span {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-subtle);
+}
+
+.persistence-chip > strong {
+  font-size: 0.79rem;
+  color: #f8fafc;
+  word-break: break-word;
+}

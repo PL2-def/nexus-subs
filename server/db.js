@@ -4,14 +4,22 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   encryptText,
-  decryptText,
+  decryptTextDetailed,
   encryptObject,
-  decryptObject,
+  decryptObjectDetailed,
+  reloadMasterKey,
+  getMasterKeyInfo,
   createRollingBackupIfDue,
   hashToken,
   summarizeUserAgent
 } from "./security.js";
-import { scheduleRemoteSync } from "./remote-store.js";
+import {
+  scheduleRemoteSync,
+  scheduleImmediateSync,
+  registerConflictMerger,
+  getRemoteStoreStatus,
+  remoteEnabled
+} from "./remote-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.resolve(__dirname, "..", "data");
@@ -258,6 +266,7 @@ function createDefaultStore() {
     },
     users: [],
     userSessions: [],
+    adminSessions: [],
     visitorProfiles: {},
     settings: {
       storeName: "NEXUS SUBS",
@@ -353,82 +362,252 @@ function createDefaultStore() {
 
 /**
  * Déchiffre les champs sensibles en mémoire au chargement, et les chiffre sur disque à la sauvegarde.
+ * Si un champ échoue au déchiffrement (ex: clé VAULT_SECRET_KEY différente), le texte chiffré original
+ * est préservé dans `preservedCiphertexts` afin de NE JAMAIS écraser ou effacer une clé existante.
  */
 function decryptInMemory(storeObj) {
-  if (!storeObj) return storeObj;
+  const preservedCiphertexts = new Map();
+  const warnings = [];
+  let migrated = false;
+  if (!storeObj) return { data: storeObj, preservedCiphertexts, warnings, migrated };
+
+  const decryptField = (parent, key, fieldPath) => {
+    if (!parent || typeof parent[key] !== "string" || !parent[key]) return;
+    const res = decryptTextDetailed(parent[key]);
+    if (res.ok) {
+      parent[key] = res.value;
+      if (res.migrated) migrated = true;
+    } else {
+      preservedCiphertexts.set(fieldPath, res.raw);
+      parent[key] = "";
+      warnings.push(fieldPath);
+    }
+  };
+
   const p = storeObj.settings?.payments;
   if (p?.stripe) {
-    p.stripe.secretKey = decryptText(p.stripe.secretKey);
-    p.stripe.webhookSecret = decryptText(p.stripe.webhookSecret);
+    decryptField(p.stripe, "secretKey", "settings.payments.stripe.secretKey");
+    decryptField(p.stripe, "webhookSecret", "settings.payments.stripe.webhookSecret");
   }
   if (p?.paypal) {
-    p.paypal.clientSecret = decryptText(p.paypal.clientSecret);
+    decryptField(p.paypal, "clientSecret", "settings.payments.paypal.clientSecret");
   }
   if (storeObj.settings?.notifications?.smtp) {
-    storeObj.settings.notifications.smtp.pass = decryptText(storeObj.settings.notifications.smtp.pass);
+    decryptField(storeObj.settings.notifications.smtp, "pass", "settings.notifications.smtp.pass");
   }
   if (storeObj.settings?.notifications) {
-    storeObj.settings.notifications.ntfyToken = decryptText(storeObj.settings.notifications.ntfyToken);
-    storeObj.settings.notifications.barkUrl = decryptText(storeObj.settings.notifications.barkUrl);
+    decryptField(storeObj.settings.notifications, "ntfyToken", "settings.notifications.ntfyToken");
+    decryptField(storeObj.settings.notifications, "barkUrl", "settings.notifications.barkUrl");
   }
   if (storeObj.settings?.ai) {
-    storeObj.settings.ai.apiKey = decryptText(storeObj.settings.ai.apiKey);
+    decryptField(storeObj.settings.ai, "apiKey", "settings.ai.apiKey");
   }
   if (Array.isArray(storeObj.orders)) {
     for (const o of storeObj.orders) {
-      if (o.deliveredAccess) {
-        o.deliveredAccess = decryptObject(o.deliveredAccess);
+      if (o?.deliveredAccess) {
+        const res = decryptObjectDetailed(o.deliveredAccess);
+        if (res.ok) {
+          o.deliveredAccess = res.value;
+          if (res.migrated) migrated = true;
+        } else {
+          const fp = `orders.${o.orderId}.deliveredAccess`;
+          preservedCiphertexts.set(fp, res.raw);
+          o.deliveredAccess = null;
+          warnings.push(fp);
+        }
       }
     }
   }
-  return storeObj;
+  return { data: storeObj, preservedCiphertexts, warnings, migrated };
 }
 
-function serializeWithEncryption(storeObj) {
+function serializeWithEncryption(storeObj, preservedCiphertexts = new Map()) {
   const clone = structuredClone(storeObj);
+
+  const encryptField = (parent, key, fieldPath) => {
+    if (!parent) return;
+    const current = parent[key];
+    if (current) {
+      parent[key] = encryptText(current);
+      preservedCiphertexts.delete(fieldPath);
+    } else if (preservedCiphertexts.has(fieldPath)) {
+      // Préserver le texte chiffré d'origine plutôt que d'écraser par vide
+      parent[key] = preservedCiphertexts.get(fieldPath);
+    } else {
+      parent[key] = "";
+    }
+  };
+
   const p = clone.settings?.payments;
   if (p?.stripe) {
-    p.stripe.secretKey = encryptText(p.stripe.secretKey);
-    p.stripe.webhookSecret = encryptText(p.stripe.webhookSecret);
+    encryptField(p.stripe, "secretKey", "settings.payments.stripe.secretKey");
+    encryptField(p.stripe, "webhookSecret", "settings.payments.stripe.webhookSecret");
   }
   if (p?.paypal) {
-    p.paypal.clientSecret = encryptText(p.paypal.clientSecret);
+    encryptField(p.paypal, "clientSecret", "settings.payments.paypal.clientSecret");
   }
   if (clone.settings?.notifications?.smtp) {
-    clone.settings.notifications.smtp.pass = encryptText(clone.settings.notifications.smtp.pass);
+    encryptField(clone.settings.notifications.smtp, "pass", "settings.notifications.smtp.pass");
   }
   if (clone.settings?.notifications) {
-    clone.settings.notifications.ntfyToken = encryptText(clone.settings.notifications.ntfyToken);
-    clone.settings.notifications.barkUrl = encryptText(clone.settings.notifications.barkUrl);
+    encryptField(clone.settings.notifications, "ntfyToken", "settings.notifications.ntfyToken");
+    encryptField(clone.settings.notifications, "barkUrl", "settings.notifications.barkUrl");
   }
   if (clone.settings?.ai) {
-    clone.settings.ai.apiKey = encryptText(clone.settings.ai.apiKey);
+    encryptField(clone.settings.ai, "apiKey", "settings.ai.apiKey");
   }
   if (Array.isArray(clone.orders)) {
     for (const o of clone.orders) {
+      if (!o) continue;
+      const fp = `orders.${o.orderId}.deliveredAccess`;
       if (o.deliveredAccess) {
         o.deliveredAccess = encryptObject(o.deliveredAccess);
+        preservedCiphertexts.delete(fp);
+      } else if (preservedCiphertexts.has(fp)) {
+        o.deliveredAccess = preservedCiphertexts.get(fp);
       }
     }
   }
   return JSON.stringify(clone, null, 2);
 }
 
+function mergeByIdArray(localArr = [], remoteArr = [], idKey = "id", timeKey = "createdAt") {
+  const map = new Map();
+  for (const item of Array.isArray(remoteArr) ? remoteArr : []) {
+    if (item && item[idKey]) map.set(String(item[idKey]), item);
+  }
+  for (const item of Array.isArray(localArr) ? localArr : []) {
+    if (!item || !item[idKey]) continue;
+    const k = String(item[idKey]);
+    const prev = map.get(k);
+    if (!prev) {
+      map.set(k, item);
+    } else {
+      const prevTs = new Date(prev.updatedAt || prev[timeKey] || 0).getTime();
+      const curTs = new Date(item.updatedAt || item[timeKey] || 0).getTime();
+      map.set(k, curTs >= prevTs ? item : prev);
+    }
+  }
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(b.updatedAt || b[timeKey] || 0).getTime() - new Date(a.updatedAt || a[timeKey] || 0).getTime()
+  );
+}
+
+function mergeChronologicalMessages(localMsgs = [], remoteMsgs = []) {
+  const map = new Map();
+  for (const m of [...(Array.isArray(remoteMsgs) ? remoteMsgs : []), ...(Array.isArray(localMsgs) ? localMsgs : [])]) {
+    if (!m) continue;
+    const k = m.id || `${m.sender}:${m.createdAt}:${String(m.text || "").slice(0, 32)}`;
+    if (!map.has(k)) map.set(k, m);
+  }
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
+  );
+}
+
+function mergeDiscussions(localList = [], remoteList = []) {
+  const map = new Map();
+  for (const t of Array.isArray(remoteList) ? remoteList : []) {
+    if (t?.threadId) map.set(t.threadId, structuredClone(t));
+  }
+  for (const t of Array.isArray(localList) ? localList : []) {
+    if (!t?.threadId) continue;
+    const existing = map.get(t.threadId);
+    if (!existing) {
+      map.set(t.threadId, structuredClone(t));
+      continue;
+    }
+    const existingTs = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+    const localTs = new Date(t.updatedAt || t.createdAt || 0).getTime();
+    const newer = localTs >= existingTs ? structuredClone(t) : existing;
+    const older = localTs >= existingTs ? existing : t;
+    newer.messages = mergeChronologicalMessages(t.messages, existing.messages);
+    newer.customerEmail = newer.customerEmail || older.customerEmail || "";
+    newer.ipAddress = newer.ipAddress || older.ipAddress || "";
+    map.set(t.threadId, newer);
+  }
+  return Array.from(map.values())
+    .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime())
+    .slice(0, 350);
+}
+
+function mergeOrders(localList = [], remoteList = []) {
+  const map = new Map();
+  for (const o of Array.isArray(remoteList) ? remoteList : []) {
+    if (o?.orderId) map.set(o.orderId, structuredClone(o));
+  }
+  for (const o of Array.isArray(localList) ? localList : []) {
+    if (!o?.orderId) continue;
+    const existing = map.get(o.orderId);
+    if (!existing) {
+      map.set(o.orderId, structuredClone(o));
+      continue;
+    }
+    const existingTs = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+    const localTs = new Date(o.updatedAt || o.createdAt || 0).getTime();
+    const newer = localTs >= existingTs ? structuredClone(o) : existing;
+    const older = localTs >= existingTs ? existing : o;
+    newer.messages = mergeChronologicalMessages(o.messages, existing.messages);
+    newer.traceTimeline = mergeChronologicalMessages(o.traceTimeline, existing.traceTimeline);
+    newer.deliveredAccess = newer.deliveredAccess || older.deliveredAccess || null;
+    map.set(o.orderId, newer);
+  }
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+  );
+}
+
 class StoreDB {
   constructor() {
     this.data = null;
     this.sessions = new Map();
+    this.preservedCiphertexts = new Map();
+    this.decryptionWarnings = [];
     this.load();
   }
 
+  applyEnvSecretFallbacks() {
+    let changed = false;
+    const s = this.data?.settings;
+    if (!s) return false;
+    const fill = (obj, key, envVal) => {
+      const clean = String(envVal || "").trim();
+      if (clean && !String(obj?.[key] || "").trim()) {
+        obj[key] = clean;
+        changed = true;
+      }
+    };
+    fill(s, "publicUrl", process.env.PUBLIC_URL);
+    fill(s.ai, "apiKey", process.env.GEMINI_API_KEY);
+    fill(s.payments?.stripe, "publishableKey", process.env.STRIPE_PUBLISHABLE_KEY);
+    fill(s.payments?.stripe, "secretKey", process.env.STRIPE_SECRET_KEY);
+    fill(s.payments?.stripe, "webhookSecret", process.env.STRIPE_WEBHOOK_SECRET);
+    fill(s.payments?.paypal, "clientId", process.env.PAYPAL_CLIENT_ID);
+    fill(s.payments?.paypal, "clientSecret", process.env.PAYPAL_CLIENT_SECRET);
+    fill(s.payments?.paypal, "paypalMeUrl", process.env.PAYPAL_ME_URL);
+    fill(s.notifications, "barkUrl", process.env.BARK_URL);
+    fill(s.notifications, "ntfyToken", process.env.NTFY_TOKEN);
+    fill(s.notifications?.smtp, "pass", process.env.SMTP_PASS);
+    return changed;
+  }
+
   load() {
+    reloadMasterKey();
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     if (fs.existsSync(DB_FILE)) {
       try {
         const raw = fs.readFileSync(DB_FILE, "utf8");
-        const parsed = decryptInMemory(JSON.parse(raw));
+        const dec = decryptInMemory(JSON.parse(raw));
+        const parsed = dec.data;
+        this.preservedCiphertexts = dec.preservedCiphertexts;
+        this.decryptionWarnings = dec.warnings;
+        if (dec.warnings.length > 0) {
+          console.warn(
+            `[DB] ⚠️ ${dec.warnings.length} secret(s) chiffré(s) n'ont pas pu être déchiffrés avec la clé active (${dec.warnings.join(", ")}). Les valeurs chiffrées originales sont préservées intactes.`
+          );
+        }
         const defaults = createDefaultStore();
         this.data = {
           ...defaults,
@@ -448,6 +627,7 @@ class StoreDB {
           },
           users: Array.isArray(parsed.users) ? parsed.users : [],
           userSessions: Array.isArray(parsed.userSessions) ? parsed.userSessions : [],
+          adminSessions: Array.isArray(parsed.adminSessions) ? parsed.adminSessions : [],
           visitorProfiles:
             parsed.visitorProfiles && typeof parsed.visitorProfiles === "object" && !Array.isArray(parsed.visitorProfiles)
               ? parsed.visitorProfiles
@@ -478,11 +658,12 @@ class StoreDB {
             }
           }
         };
-        if (process.env.GEMINI_API_KEY && !String(this.data.settings.ai.apiKey || "").trim()) {
-          this.data.settings.ai.apiKey = process.env.GEMINI_API_KEY.trim();
+        const envSecretsFilled = this.applyEnvSecretFallbacks();
+        const adminEnvChanged = this.applyEnvAdminOverrideIfSet();
+        // N'écrit sur disque / GitHub au démarrage QUE si une migration/env override a réellement changé les données
+        if (envSecretsFilled || adminEnvChanged || (dec.migrated && dec.warnings.length === 0)) {
+          this.save();
         }
-        this.applyEnvAdminOverrideIfSet();
-        this.save();
         return;
       } catch (err) {
         console.error("[DB] Recovery backup created:", err);
@@ -490,6 +671,9 @@ class StoreDB {
       }
     }
     this.data = createDefaultStore();
+    this.preservedCiphertexts = new Map();
+    this.decryptionWarnings = [];
+    this.applyEnvSecretFallbacks();
     this.applyEnvAdminOverrideIfSet();
     this.save();
   }
@@ -502,10 +686,10 @@ class StoreDB {
   applyEnvAdminOverrideIfSet() {
     const envEmail = String(process.env.ADMIN_EMAIL || "").trim();
     const envPass = String(process.env.ADMIN_PASSWORD || "");
-    if (!envEmail && envPass.length < 8) return;
+    if (!envEmail && envPass.length < 8) return false;
 
     const sig = crypto.createHash("sha256").update(`${envEmail}|${envPass}`).digest("hex").slice(0, 24);
-    if (this.data.admin?.appliedEnvSig === sig) return;
+    if (this.data.admin?.appliedEnvSig === sig) return false;
 
     if (envEmail) {
       this.data.admin.email = envEmail;
@@ -517,39 +701,234 @@ class StoreDB {
     }
     this.data.admin.appliedEnvSig = sig;
     console.log("[DB] Identifiants Admin synchronisés depuis les variables d'environnement.");
+    return true;
   }
 
-  save() {
+  save({ immediate = false } = {}) {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     const tmpFile = `${DB_FILE}.tmp`;
-    fs.writeFileSync(tmpFile, serializeWithEncryption(this.data), "utf8");
+    fs.writeFileSync(tmpFile, serializeWithEncryption(this.data, this.preservedCiphertexts), "utf8");
     fs.renameSync(tmpFile, DB_FILE);
     createRollingBackupIfDue(DB_FILE);
-    scheduleRemoteSync("nexus-store.json");
+    if (immediate) {
+      scheduleImmediateSync("nexus-store.json");
+    } else {
+      scheduleRemoteSync("nexus-store.json");
+    }
+  }
+
+  /**
+   * Fusionne un snapshot distant en cas de conflit GitHub HTTP 409 (ex: redéploiement Render chevauchant).
+   * Préserve tous les messages, discussions, commandes, remarques IA, comptes et clés non vides.
+   */
+  mergeRemoteSnapshot(remoteBuffer) {
+    const remoteRaw = JSON.parse(remoteBuffer.toString("utf8"));
+    const decRemote = decryptInMemory(remoteRaw);
+    const r = decRemote.data;
+    if (!r || !this.data) return null;
+
+    for (const [k, v] of decRemote.preservedCiphertexts.entries()) {
+      if (!this.preservedCiphertexts.has(k)) this.preservedCiphertexts.set(k, v);
+    }
+
+    this.data.discussions = mergeDiscussions(this.data.discussions, r.discussions);
+    this.data.orders = mergeOrders(this.data.orders, r.orders);
+    this.data.aiRemarks = mergeByIdArray(this.data.aiRemarks, r.aiRemarks, "id", "createdAt").slice(0, 400);
+    this.data.users = mergeByIdArray(this.data.users, r.users, "id", "createdAt");
+    this.data.userSessions = mergeByIdArray(this.data.userSessions, r.userSessions, "id", "createdAt");
+    this.data.adminSessions = mergeByIdArray(this.data.adminSessions, r.adminSessions, "id", "createdAt");
+    this.data.rescueClaims = mergeByIdArray(this.data.rescueClaims, r.rescueClaims, "rescueId", "createdAt");
+    this.data.lossReports = mergeByIdArray(this.data.lossReports, r.lossReports, "reportId", "createdAt");
+    this.data.supportMessages = mergeByIdArray(this.data.supportMessages, r.supportMessages, "id", "createdAt");
+    this.data.notifications = mergeByIdArray(this.data.notifications, r.notifications, "id", "createdAt").slice(0, 180);
+
+    // Préserver les clés non vides du distant si elles sont vides en local
+    const keepIfEmpty = (localObj, remoteObj, key) => {
+      if (localObj && remoteObj && !String(localObj[key] || "").trim() && String(remoteObj[key] || "").trim()) {
+        localObj[key] = remoteObj[key];
+      }
+    };
+    keepIfEmpty(this.data.settings?.ai, r.settings?.ai, "apiKey");
+    keepIfEmpty(this.data.settings?.payments?.stripe, r.settings?.payments?.stripe, "secretKey");
+    keepIfEmpty(this.data.settings?.payments?.stripe, r.settings?.payments?.stripe, "publishableKey");
+    keepIfEmpty(this.data.settings?.payments?.stripe, r.settings?.payments?.stripe, "webhookSecret");
+    keepIfEmpty(this.data.settings?.payments?.paypal, r.settings?.payments?.paypal, "clientId");
+    keepIfEmpty(this.data.settings?.payments?.paypal, r.settings?.payments?.paypal, "clientSecret");
+    keepIfEmpty(this.data.settings?.notifications, r.settings?.notifications, "barkUrl");
+    keepIfEmpty(this.data.settings?.notifications, r.settings?.notifications, "ntfyToken");
+    keepIfEmpty(this.data.settings?.notifications?.smtp, r.settings?.notifications?.smtp, "pass");
+
+    const serialized = serializeWithEncryption(this.data, this.preservedCiphertexts);
+    const tmpFile = `${DB_FILE}.tmp`;
+    fs.writeFileSync(tmpFile, serialized, "utf8");
+    fs.renameSync(tmpFile, DB_FILE);
+    return Buffer.from(serialized, "utf8");
+  }
+
+  getPersistenceSummary() {
+    const remote = getRemoteStoreStatus();
+    const keyInfo = getMasterKeyInfo();
+    const s = this.data?.settings || {};
+    const totalMessages =
+      (this.data?.discussions || []).reduce((acc, t) => acc + (t.messages?.length || 0), 0) +
+      (this.data?.orders || []).reduce((acc, o) => acc + (o.messages?.length || 0), 0);
+    const configuredKeys = [
+      (s.ai?.apiKey || "").trim() ? "Gemini IA" : null,
+      (s.payments?.stripe?.secretKey || "").trim() ? "Stripe" : null,
+      (s.payments?.paypal?.clientSecret || "").trim() ? "PayPal" : null,
+      (s.notifications?.barkUrl || "").trim() ? "Bark iPhone" : null,
+      (s.notifications?.ntfyToken || "").trim() ? "ntfy" : null,
+      (s.notifications?.smtp?.pass || "").trim() ? "SMTP" : null
+    ].filter(Boolean);
+
+    return {
+      ...remote,
+      vaultKeySource: keyInfo.source,
+      hasEnvVaultKey: keyInfo.hasEnvVaultKey,
+      hasVaultFile: keyInfo.hasVaultFile,
+      decryptionWarnings: [...this.decryptionWarnings],
+      counts: {
+        discussions: (this.data?.discussions || []).length,
+        totalMessages,
+        orders: (this.data?.orders || []).length,
+        aiRemarks: (this.data?.aiRemarks || []).length,
+        users: (this.data?.users || []).length,
+        configuredKeys
+      }
+    };
+  }
+
+  exportBackupSnapshot() {
+    return {
+      format: "nexus-backup-v1",
+      exportedAt: new Date().toISOString(),
+      data: structuredClone(this.data)
+    };
+  }
+
+  importBackupSnapshot(payload, { mode = "merge" } = {}) {
+    const incoming = payload?.format === "nexus-backup-v1" && payload.data ? payload.data : payload;
+    if (!incoming || typeof incoming !== "object") {
+      throw new Error("Fichier de sauvegarde JSON invalide.");
+    }
+    const dec = decryptInMemory(structuredClone(incoming));
+    const src = dec.data;
+    if (!src.settings && !Array.isArray(src.discussions) && !Array.isArray(src.orders)) {
+      throw new Error("Le fichier ne semble pas être une sauvegarde NEXUS valide.");
+    }
+
+    if (mode === "replace") {
+      const defaults = createDefaultStore();
+      const prevAdmin = this.data.admin;
+      const prevAdminSessions = this.data.adminSessions || [];
+      this.data = {
+        ...defaults,
+        ...src,
+        admin: src.admin?.passwordHash ? src.admin : prevAdmin,
+        adminSessions: mergeByIdArray(prevAdminSessions, src.adminSessions || [], "id", "createdAt")
+      };
+    } else {
+      this.data.discussions = mergeDiscussions(this.data.discussions, src.discussions);
+      this.data.orders = mergeOrders(this.data.orders, src.orders);
+      this.data.aiRemarks = mergeByIdArray(this.data.aiRemarks, src.aiRemarks, "id", "createdAt").slice(0, 400);
+      this.data.users = mergeByIdArray(this.data.users, src.users, "id", "createdAt");
+      this.data.rescueClaims = mergeByIdArray(this.data.rescueClaims, src.rescueClaims, "rescueId", "createdAt");
+      this.data.lossReports = mergeByIdArray(this.data.lossReports, src.lossReports, "reportId", "createdAt");
+      this.data.supportMessages = mergeByIdArray(this.data.supportMessages, src.supportMessages, "id", "createdAt");
+      this.data.notifications = mergeByIdArray(this.data.notifications, src.notifications, "id", "createdAt").slice(0, 180);
+      if (Array.isArray(src.products) && src.products.length > 0) this.data.products = src.products;
+      if (Array.isArray(src.coupons) && src.coupons.length > 0) this.data.coupons = src.coupons;
+      // Importer toutes les clés non vides du backup
+      const copyIfPresent = (dst, from, key) => {
+        if (dst && from && String(from[key] || "").trim()) dst[key] = from[key];
+      };
+      copyIfPresent(this.data.settings, src.settings, "publicUrl");
+      copyIfPresent(this.data.settings?.ai, src.settings?.ai, "apiKey");
+      copyIfPresent(this.data.settings?.ai, src.settings?.ai, "model");
+      copyIfPresent(this.data.settings?.payments?.stripe, src.settings?.payments?.stripe, "publishableKey");
+      copyIfPresent(this.data.settings?.payments?.stripe, src.settings?.payments?.stripe, "secretKey");
+      copyIfPresent(this.data.settings?.payments?.stripe, src.settings?.payments?.stripe, "webhookSecret");
+      copyIfPresent(this.data.settings?.payments?.stripe, src.settings?.payments?.stripe, "paymentLinkFallback");
+      copyIfPresent(this.data.settings?.payments?.paypal, src.settings?.payments?.paypal, "clientId");
+      copyIfPresent(this.data.settings?.payments?.paypal, src.settings?.payments?.paypal, "clientSecret");
+      copyIfPresent(this.data.settings?.payments?.paypal, src.settings?.payments?.paypal, "paypalMeUrl");
+      copyIfPresent(this.data.settings?.notifications, src.settings?.notifications, "barkUrl");
+      copyIfPresent(this.data.settings?.notifications, src.settings?.notifications, "ntfyTopic");
+      copyIfPresent(this.data.settings?.notifications, src.settings?.notifications, "ntfyToken");
+      copyIfPresent(this.data.settings?.notifications, src.settings?.notifications, "webhookUrl");
+      copyIfPresent(this.data.settings?.notifications?.smtp, src.settings?.notifications?.smtp, "user");
+      copyIfPresent(this.data.settings?.notifications?.smtp, src.settings?.notifications?.smtp, "pass");
+    }
+
+    this.decryptionWarnings = [];
+    this.save({ immediate: true });
+  }
+
+  pruneExpiredAdminSessions() {
+    const now = Date.now();
+    this.data.adminSessions = Array.isArray(this.data.adminSessions)
+      ? this.data.adminSessions.filter((s) => s && s.expiresAt > now)
+      : [];
   }
 
   createAdminSession(email) {
+    this.pruneExpiredAdminSessions();
     const token = crypto.randomBytes(32).toString("hex");
-    const expiresAt = Date.now() + 1000 * 60 * 60 * 12; // 12h session
+    const tokenHash = hashToken(token);
+    const expiresAt = Date.now() + 1000 * 60 * 60 * 24 * 7; // 7 jours persistés
+    const sess = {
+      id: `asess_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`,
+      tokenHash,
+      email,
+      createdAt: new Date().toISOString(),
+      expiresAt
+    };
     this.sessions.set(token, { email, expiresAt });
+    this.data.adminSessions.unshift(sess);
+    this.data.adminSessions = this.data.adminSessions.slice(0, 12);
+    this.save();
     return token;
   }
 
   verifyAdminSession(token) {
     if (!token) return false;
-    const session = this.sessions.get(token);
-    if (!session) return false;
-    if (Date.now() > session.expiresAt) {
-      this.sessions.delete(token);
+    const now = Date.now();
+    const mem = this.sessions.get(token);
+    if (mem) {
+      if (now > mem.expiresAt) {
+        this.sessions.delete(token);
+      } else {
+        return true;
+      }
+    }
+    const tokenHash = hashToken(token);
+    const persisted = (this.data?.adminSessions || []).find((s) => s.tokenHash === tokenHash);
+    if (!persisted) return false;
+    if (now > persisted.expiresAt) {
+      this.pruneExpiredAdminSessions();
       return false;
     }
+    this.sessions.set(token, { email: persisted.email, expiresAt: persisted.expiresAt });
     return true;
   }
 
   revokeAdminSession(token) {
-    if (token) this.sessions.delete(token);
+    if (!token) return;
+    this.sessions.delete(token);
+    const tokenHash = hashToken(token);
+    const before = (this.data?.adminSessions || []).length;
+    this.data.adminSessions = (this.data?.adminSessions || []).filter((s) => s.tokenHash !== tokenHash);
+    if (this.data.adminSessions.length !== before) this.save();
+  }
+
+  revokeOtherAdminSessions(exceptRawToken) {
+    const keepHash = exceptRawToken ? hashToken(exceptRawToken) : "";
+    for (const tok of this.sessions.keys()) {
+      if (tok !== exceptRawToken) this.sessions.delete(tok);
+    }
+    this.data.adminSessions = (this.data?.adminSessions || []).filter((s) => keepHash && s.tokenHash === keepHash);
   }
 
   // ============================================================================
@@ -711,3 +1090,5 @@ class StoreDB {
 }
 
 export const db = new StoreDB();
+
+registerConflictMerger("nexus-store.json", (remoteBuf) => db.mergeRemoteSnapshot(remoteBuf));
