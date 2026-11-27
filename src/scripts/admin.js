@@ -340,6 +340,23 @@ class AdminController {
         });
       }
     }, 1000);
+
+    // Synchronisation légère toutes les 5s quand la modale Admin est ouverte sur Discussions (résiste aux coupures SSE Render)
+    setInterval(async () => {
+      const dialog = document.getElementById("admin-dialog");
+      if (!dialog?.open || !this.token || this.activeTab !== "discussions" || !this.dashboard) return;
+      const prevSig = (this.dashboard.discussions || [])
+        .map((t) => `${t.threadId}:${t.messages?.length || 0}:${t.aiControl?.mode || ""}`)
+        .join("|");
+      const ok = await this.refreshDashboardSilently();
+      if (!ok) return;
+      const nextSig = (this.dashboard.discussions || [])
+        .map((t) => `${t.threadId}:${t.messages?.length || 0}:${t.aiControl?.mode || ""}`)
+        .join("|");
+      if (nextSig !== prevSig) {
+        this.render({ preserveChatDraft: true });
+      }
+    }, 5000);
   }
 
   authHeaders() {
@@ -920,12 +937,18 @@ class AdminController {
         <!-- Barre de Contrôle Relais Humain ↔ IA Gemini -->
         ${(() => {
           const rm = getRelayStatusMeta(t.aiControl);
+          const aiHasKey = Boolean(d.settings?.ai?.hasApiKey);
+          const aiErr = t.aiControl?.lastError || d.settings?.ai?.lastError || "";
           return `
             <div class="admin-relay-control-bar">
               <div class="relay-status-info">
                 <span class="relay-status-pill ${rm.cls}" ${rm.relayDueAt ? `data-relay-countdown="${escapeHtml(rm.relayDueAt)}"` : ""}>${escapeHtml(rm.label)}</span>
                 <span class="relay-status-hint">${
-                  rm.mode === "ai_active"
+                  !aiHasKey
+                    ? "⚠️ Clé API Gemini absente sur ce serveur — ajoutez-la dans Config (📲) pour que l'IA réponde."
+                    : aiErr
+                    ? `⚠️ Erreur IA : ${escapeHtml(aiErr.slice(0, 120))}`
+                    : rm.mode === "ai_active"
                     ? "L'IA Gemini répond automatiquement au client."
                     : rm.mode === "waiting_human"
                     ? "En attente de votre réponse (l'IA prend le relais à la fin du chrono)."
@@ -2244,6 +2267,13 @@ class AdminController {
           <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:0.75rem;">
             Au début d'une conversation, un message <strong>non-IA</strong> (0 crédit) avertit le client qu'un conseiller humain a été alerté. Si vous ne répondez pas sous 60 secondes, l'IA prend automatiquement le relais jusqu'à ce que vous cliquiez sur <strong>« Reprendre le relais »</strong>.
           </p>
+          ${
+            !s.ai?.hasApiKey
+              ? `<div class="fraud-reasons-alert" style="margin-bottom:0.75rem;">⚠️ <strong>Clé API Gemini non configurée sur ce serveur !</strong> Collez votre clé ci-dessous puis cliquez sur <em>Enregistrer toute la configuration</em> pour activer les réponses IA en ligne.</div>`
+              : s.ai?.lastError
+              ? `<div class="fraud-reasons-alert" style="margin-bottom:0.75rem;">⚠️ Dernière erreur Gemini : ${escapeHtml(s.ai.lastError)}</div>`
+              : ""
+          }
           <div class="form-row">
             <div class="form-group">
               <label class="form-label">Clé API Gemini (chiffrée AES-256)</label>

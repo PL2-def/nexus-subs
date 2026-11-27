@@ -19,7 +19,54 @@ let discussionSse = null;
 let metaExpanded = false;
 let suggestionsOpen = false;
 let countdownTimer = null;
+let pollTimer = null;
 let viewportBound = false;
+
+function getThreadSignature(thread) {
+  if (!thread) return "";
+  const msgs = thread.messages || [];
+  const lastId = msgs[msgs.length - 1]?.id || "";
+  return `${thread.threadId}|${msgs.length}|${lastId}|${thread.aiControl?.mode || ""}|${thread.status || ""}`;
+}
+
+function stopDiscussionPoll() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function startDiscussionPoll() {
+  if (pollTimer) return;
+  pollTimer = setInterval(async () => {
+    const dialog = document.getElementById("discussion-dialog");
+    if (!dialog?.open) {
+      stopDiscussionPoll();
+      return;
+    }
+    if (!activeThread?.threadId || !activeToken) return;
+    try {
+      const resp = await fetch(
+        `/api/discussions/${encodeURIComponent(activeThread.threadId)}?token=${encodeURIComponent(activeToken)}`,
+        { cache: "no-store" }
+      );
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (!data?.thread) return;
+      if (getThreadSignature(data.thread) !== getThreadSignature(activeThread)) {
+        const prevLen = activeThread?.messages?.length || 0;
+        activeThread = data.thread;
+        const last = activeThread.messages?.[activeThread.messages.length - 1];
+        if (activeThread.messages.length > prevLen && (last?.sender === "admin" || last?.sender === "ai")) {
+          playChime("success");
+        }
+        renderDiscussionDialog({ preserveInput: true });
+      }
+    } catch {
+      // ignore transient network error
+    }
+  }, 3000);
+}
 
 function loadSavedThreadRef() {
   try {
@@ -106,6 +153,7 @@ export async function initCustomerDiscussionWidget() {
     viewportBound = true;
     dialog.addEventListener("close", () => {
       dialog.style.removeProperty("--disc-vvh");
+      stopDiscussionPoll();
       if (countdownTimer) {
         clearInterval(countdownTimer);
         countdownTimer = null;
@@ -129,13 +177,15 @@ function connectDiscussionStream(threadId, token) {
     const es = new EventSource(
       `/api/events/discussion/${encodeURIComponent(threadId)}?token=${encodeURIComponent(token)}`
     );
-    es.addEventListener("new_message", (e) => {
-      const payload = JSON.parse(e.data);
+    const applyThreadUpdate = (nextThread, { allowToast = true } = {}) => {
+      if (!nextThread) return;
+      const changed = getThreadSignature(nextThread) !== getThreadSignature(activeThread);
       const prevCount = activeThread?.messages?.length || 0;
-      activeThread = payload.thread;
+      activeThread = nextThread;
+      if (!changed) return;
+
       const last = activeThread.messages?.[activeThread.messages.length - 1];
       const dialog = document.getElementById("discussion-dialog");
-
       const isIncoming =
         activeThread.messages.length > prevCount &&
         (last?.sender === "admin" || last?.sender === "ai" || last?.sender === "relay");
@@ -146,7 +196,7 @@ function connectDiscussionStream(threadId, token) {
         }
         if (dialog?.open) {
           renderDiscussionDialog({ preserveInput: true });
-        } else if (last?.sender === "admin" || last?.sender === "ai") {
+        } else if (allowToast && (last?.sender === "admin" || last?.sender === "ai")) {
           updateFloatingUnreadBadge(
             (parseInt(document.getElementById("floating-chat-unread")?.textContent || "0", 10) || 0) + 1
           );
@@ -161,12 +211,16 @@ function connectDiscussionStream(threadId, token) {
       } else if (dialog?.open) {
         renderDiscussionDialog({ preserveInput: true });
       }
+    };
+
+    es.addEventListener("init", (e) => {
+      applyThreadUpdate(JSON.parse(e.data).thread, { allowToast: false });
+    });
+    es.addEventListener("new_message", (e) => {
+      applyThreadUpdate(JSON.parse(e.data).thread, { allowToast: true });
     });
     es.addEventListener("discussion_updated", (e) => {
-      const payload = JSON.parse(e.data);
-      activeThread = payload.thread;
-      const dialog = document.getElementById("discussion-dialog");
-      if (dialog?.open) renderDiscussionDialog({ preserveInput: true });
+      applyThreadUpdate(JSON.parse(e.data).thread, { allowToast: false });
     });
     discussionSse = es;
   } catch {
@@ -225,6 +279,7 @@ export async function openCustomerDiscussion({ productId = null, topic = null, r
   if (!dialog.open) dialog.showModal();
   syncVisualViewportHeight();
   startCountdownLoop();
+  startDiscussionPoll();
 }
 
 function getQuickQuestionsForTopic(topicVal) {
@@ -656,6 +711,7 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
         if (account.authenticated) account.fetchSession({ silent: true });
         renderDiscussionDialog();
         startCountdownLoop();
+        startDiscussionPoll();
       } else {
         if (customerName || customerEmail) {
           await fetch(`/api/discussions/${encodeURIComponent(activeThread.threadId)}/context`, {

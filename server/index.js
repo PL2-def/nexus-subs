@@ -64,7 +64,8 @@ import {
   onCustomerMessageInThread,
   setThreadRelayMode,
   sanitizeAiControlForCustomer,
-  testGeminiConnection
+  testGeminiConnection,
+  checkThreadRelayDue
 } from "./ai-assistant.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -649,12 +650,27 @@ app.get("/api/bootstrap", (_req, res) => {
   });
 });
 
-app.get("/api/events/catalog", (req, res) => {
+function openSseStream(req, res) {
   res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive"
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no"
   });
+  res.flushHeaders?.();
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(": ping\n\n");
+    } catch {
+      clearInterval(heartbeat);
+    }
+  }, 20_000);
+  heartbeat.unref?.();
+  req.on("close", () => clearInterval(heartbeat));
+}
+
+app.get("/api/events/catalog", (req, res) => {
+  openSseStream(req, res);
   res.write(": connected\n\n");
   catalogStreams.add(res);
   req.on("close", () => catalogStreams.delete(res));
@@ -2105,11 +2121,7 @@ app.get("/api/events/order/:orderId", (req, res) => {
     return res.status(403).end();
   }
 
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive"
-  });
+  openSseStream(req, res);
   sendSse(res, "init", { order: sanitizeOrderForCustomer(order) });
 
   if (!orderStreams.has(orderId)) orderStreams.set(orderId, new Set());
@@ -2552,6 +2564,8 @@ app.get("/api/discussions/:threadId", (req, res) => {
     return res.status(404).json({ error: "Discussion introuvable." });
   }
 
+  checkThreadRelayDue(thread);
+
   if (!isAdmin && thread.unreadByCustomer > 0) {
     thread.unreadByCustomer = 0;
     db.save();
@@ -2617,11 +2631,7 @@ app.get("/api/events/discussion/:threadId", (req, res) => {
     return res.status(403).end();
   }
 
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive"
-  });
+  openSseStream(req, res);
   sendSse(res, "init", { thread: sanitizeThreadForCustomer(thread) });
 
   if (!discussionStreams.has(threadId)) discussionStreams.set(threadId, new Set());
@@ -2922,11 +2932,7 @@ app.post("/api/admin/logout", (req, res) => {
 });
 
 app.get("/api/events/admin", requireAdmin, (req, res) => {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive"
-  });
+  openSseStream(req, res);
   res.write(": admin-connected\n\n");
   adminStreams.add(res);
   req.on("close", () => adminStreams.delete(res));
@@ -3083,7 +3089,8 @@ app.get("/api/admin/dashboard", requireAdmin, async (_req, res) => {
         model: s.ai?.model || "gemini-flash-lite-latest",
         delaySeconds: Number(s.ai?.delaySeconds) || 60,
         hasApiKey: Boolean((s.ai?.apiKey || process.env.GEMINI_API_KEY || "").trim()),
-        apiKeyPreview: maskSecret(s.ai?.apiKey || process.env.GEMINI_API_KEY || "")
+        apiKeyPreview: maskSecret(s.ai?.apiKey || process.env.GEMINI_API_KEY || ""),
+        lastError: s.ai?.lastError || ""
       },
       payments: {
         stripe: {
@@ -3788,7 +3795,10 @@ app.put("/api/admin/settings", requireAdmin, async (req, res) => {
   if (b.ai) {
     s.ai = s.ai || { enabled: true, provider: "gemini", apiKey: "", model: "gemini-flash-lite-latest", delaySeconds: 60 };
     if (b.ai.enabled !== undefined) s.ai.enabled = Boolean(b.ai.enabled);
-    if (b.ai.apiKey && !String(b.ai.apiKey).includes("••••")) s.ai.apiKey = String(b.ai.apiKey).trim();
+    if (b.ai.apiKey && !String(b.ai.apiKey).includes("••••")) {
+      s.ai.apiKey = String(b.ai.apiKey).trim();
+      s.ai.lastError = "";
+    }
     if (b.ai.clearApiKey) s.ai.apiKey = "";
     if (b.ai.model !== undefined && String(b.ai.model).trim()) s.ai.model = String(b.ai.model).trim();
     if (b.ai.delaySeconds !== undefined) {

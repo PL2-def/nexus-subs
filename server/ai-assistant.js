@@ -16,14 +16,17 @@ import { canonicalizeEmail } from "./security.js";
 const FALLBACK_MODELS = [
   "gemini-flash-lite-latest",
   "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
   "gemini-3.5-flash",
   "gemini-3.8-flash",
-  "gemini-flash-latest"
+  "gemini-flash-latest",
+  "gemini-2.5-flash-lite"
 ];
 
 const relayTimers = new Map(); // threadId -> Timeout
 const debounceTimers = new Map(); // threadId -> Timeout
 const inFlightVersion = new Map(); // threadId -> relayVersion
+const pendingFollowUp = new Set(); // threadIds that received a new customer message while AI was generating
 
 let deps = {
   broadcastDiscussion: null,
@@ -246,7 +249,7 @@ export async function callGeminiApi({ apiKey, model, systemInstruction, contents
             maxOutputTokens: 1024
           }
         }),
-        signal: AbortSignal.timeout(18_000)
+        signal: AbortSignal.timeout(25_000)
       });
 
       const data = await resp.json().catch(() => ({}));
@@ -306,9 +309,22 @@ async function generateAndPostAiReply(threadId, expectedVersion) {
   if (ctrl.mode !== "ai_active" || ctrl.relayVersion !== expectedVersion) return;
 
   const cfg = getAiSettings();
-  if (!cfg.enabled || !cfg.apiKey) return;
+  if (!cfg.enabled) return;
+  if (!cfg.apiKey) {
+    const errMsg = "Clé API Gemini manquante sur le serveur (ajoutez-la dans Admin > Téléphone, IA & Paiements).";
+    db.data.settings.ai = db.data.settings.ai || {};
+    db.data.settings.ai.lastError = errMsg;
+    ctrl.lastError = errMsg;
+    console.warn("[AI Reply Blocked]", errMsg);
+    db.save();
+    broadcastThreadUpdate(thread, "discussion_updated");
+    return;
+  }
 
-  if (inFlightVersion.get(threadId) === expectedVersion) return;
+  if (inFlightVersion.get(threadId) === expectedVersion) {
+    pendingFollowUp.add(threadId);
+    return;
+  }
   inFlightVersion.set(threadId, expectedVersion);
 
   try {
@@ -328,9 +344,17 @@ async function generateAndPostAiReply(threadId, expectedVersion) {
     }
 
     if (!result.ok || !result.text) {
+      db.data.settings.ai = db.data.settings.ai || {};
+      db.data.settings.ai.lastError = result.error || "Erreur Gemini inconnue";
+      freshCtrl.lastError = result.error || "Erreur Gemini inconnue";
       console.warn("[AI Reply Skipped]", result.error);
+      db.save();
+      broadcastThreadUpdate(freshThread, "discussion_updated");
       return;
     }
+
+    if (db.data.settings.ai) db.data.settings.ai.lastError = "";
+    freshCtrl.lastError = "";
 
     const nowIso = new Date().toISOString();
     const aiMsg = {
@@ -352,6 +376,29 @@ async function generateAndPostAiReply(threadId, expectedVersion) {
     if (inFlightVersion.get(threadId) === expectedVersion) {
       inFlightVersion.delete(threadId);
     }
+    if (pendingFollowUp.has(threadId)) {
+      pendingFollowUp.delete(threadId);
+      const tNow = db.data.discussions.find((t) => t.threadId === threadId);
+      if (tNow && tNow.status !== "resolved" && tNow.aiControl?.mode === "ai_active" && tNow.aiControl.relayVersion === expectedVersion) {
+        const nonMeta = (tNow.messages || []).filter((m) => m.sender === "customer" || m.sender === "admin" || m.sender === "ai");
+        if (nonMeta[nonMeta.length - 1]?.sender === "customer") {
+          setTimeout(() => {
+            generateAndPostAiReply(threadId, expectedVersion).catch(() => {});
+          }, 400).unref?.();
+        }
+      }
+    }
+  }
+}
+
+export function checkThreadRelayDue(thread) {
+  if (!thread || thread.status === "resolved") return;
+  if (
+    thread.aiControl?.mode === "waiting_human" &&
+    thread.aiControl.relayDueAt &&
+    new Date(thread.aiControl.relayDueAt).getTime() <= Date.now()
+  ) {
+    executeAiTakeover(thread.threadId, thread.aiControl.relayVersion).catch(() => {});
   }
 }
 

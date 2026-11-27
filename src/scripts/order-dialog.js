@@ -12,6 +12,7 @@ import { siteTracker } from "./site-tracker.js";
 import { account } from "./account.js";
 
 let activeEventSource = null;
+let orderPollTimer = null;
 let currentOrderState = null;
 let currentAccessToken = "";
 let currentPaymentAction = null;
@@ -33,6 +34,10 @@ function cleanupOrderStream() {
   if (activeEventSource) {
     activeEventSource.close();
     activeEventSource = null;
+  }
+  if (orderPollTimer) {
+    clearInterval(orderPollTimer);
+    orderPollTimer = null;
   }
   clearTimeout(revealTimer);
   secretsRevealed = false;
@@ -253,6 +258,13 @@ export async function openLiveOrderDialog({ orderId, accessToken, initialOrder =
     const es = new EventSource(
       `/api/events/order/${encodeURIComponent(orderId)}?token=${encodeURIComponent(accessToken)}`
     );
+    es.addEventListener("init", (e) => {
+      const next = JSON.parse(e.data).order;
+      if (next && (next.messages?.length !== currentOrderState?.messages?.length || next.deliveryStatus !== currentOrderState?.deliveryStatus || next.paymentStatus !== currentOrderState?.paymentStatus)) {
+        currentOrderState = next;
+        renderLiveOrderContent({ preserveChatInput: true });
+      }
+    });
     es.addEventListener("order_updated", (e) => {
       currentOrderState = JSON.parse(e.data).order;
       renderLiveOrderContent({ preserveChatInput: true });
@@ -267,9 +279,9 @@ export async function openLiveOrderDialog({ orderId, accessToken, initialOrder =
       const prevLen = currentOrderState?.messages?.length || 0;
       currentOrderState = JSON.parse(e.data).order;
       const lastMsg = currentOrderState.messages?.[currentOrderState.messages.length - 1];
-      if (currentOrderState.messages.length > prevLen && lastMsg?.sender === "admin") {
+      if (currentOrderState.messages.length > prevLen && (lastMsg?.sender === "admin" || lastMsg?.sender === "ai")) {
         playChime("success");
-        showToast("Nouveau message du vendeur reçu !", "info");
+        showToast(lastMsg.sender === "ai" ? "🤖 Réponse de l'assistant IA reçue !" : "Nouveau message du vendeur reçu !", "info");
       }
       renderLiveOrderContent({ preserveChatInput: true });
     });
@@ -277,6 +289,29 @@ export async function openLiveOrderDialog({ orderId, accessToken, initialOrder =
   } catch {
     // ignore SSE fallback
   }
+
+  orderPollTimer = setInterval(async () => {
+    const dlg = document.getElementById("order-live-dialog");
+    if (!dlg?.open || !currentOrderState?.orderId) {
+      clearInterval(orderPollTimer);
+      orderPollTimer = null;
+      return;
+    }
+    try {
+      const r = await fetch(`/api/orders/${encodeURIComponent(orderId)}?token=${encodeURIComponent(accessToken)}`, { cache: "no-store" });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (!d?.order) return;
+      const changed =
+        d.order.messages?.length !== currentOrderState.messages?.length ||
+        d.order.paymentStatus !== currentOrderState.paymentStatus ||
+        d.order.deliveryStatus !== currentOrderState.deliveryStatus;
+      if (changed) {
+        currentOrderState = d.order;
+        renderLiveOrderContent({ preserveChatInput: true });
+      }
+    } catch {}
+  }, 4000);
 }
 
 function renderLiveOrderContent({ preserveChatInput = false } = {}) {
