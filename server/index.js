@@ -1446,6 +1446,14 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
     });
     broadcastAdmin("order_created", { order: enrichOrderForAdmin(order), notification: notif });
 
+    await sendMobilePushNotification({
+      title: `🛒 Nouvel achat ${total} € (#${orderId})${fraudTag}`,
+      message: `Client : ${cleanName} (${cleanEmail})\nOffre : ${itemsSummary}\nMode : ${paymentMethod.toUpperCase()}\nTouchez pour ouvrir la commande !`,
+      priority: "urgent",
+      tags: fraudCheck.score >= 70 ? "rotating_light,shopping_cart" : "shopping_cart,euro",
+      clickUrl: `${originUrl}/?adminOrder=${encodeURIComponent(orderId)}#admin`
+    });
+
     res.status(201).json({
       order: sanitizeOrderForCustomer(order),
       accessToken,
@@ -1745,8 +1753,8 @@ app.post("/api/orders/:orderId/messages", chatLimiter, async (req, res) => {
     await sendMobilePushNotification({
       title: `💬 ${order.customerName} (#${order.orderId})`,
       message: cleanText,
-      priority: "high",
-      tags: "speech_balloon",
+      priority: "urgent",
+      tags: "speech_balloon,rotating_light",
       clickUrl: `${originUrl}/?adminOrder=${encodeURIComponent(order.orderId)}#admin`
     });
   }
@@ -1923,7 +1931,7 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
     await sendMobilePushNotification({
       title: `${alertPrefix} ${thread.customerName} (${topicLabel})`,
       message: cleanMsg.slice(0, 300),
-      priority: diag.needsFastHelp || diag.isAnnoyed || diag.isFurious ? "urgent" : "high",
+      priority: "urgent",
       tags: diag.isFurious || diag.isAnnoyed ? "rotating_light,speech_balloon" : "speech_balloon,sparkles",
       clickUrl: `${originUrl}/?adminThread=${encodeURIComponent(thread.threadId)}#admin`
     });
@@ -2288,7 +2296,7 @@ app.post("/api/discussions/:threadId/messages", chatLimiter, async (req, res) =>
     await sendMobilePushNotification({
       title: `${prefix} ${thread.customerName}`,
       message: `[${thread.topicLabel}]\n${cleanText.slice(0, 260)}`,
-      priority: diag.needsFastHelp || diag.isAnnoyed || diag.isFurious ? "urgent" : "high",
+      priority: "urgent",
       tags: diag.isFurious || diag.isAnnoyed ? "anger,speech_balloon" : "speech_balloon",
       clickUrl: `${originUrl}/?adminThread=${encodeURIComponent(thread.threadId)}#admin`
     });
@@ -2381,8 +2389,8 @@ app.post("/api/support", chatLimiter, async (req, res) => {
   await sendMobilePushNotification({
     title: `✉️ Support : ${cleanName}`,
     message: `${cleanEmail}\n${cleanMsg.slice(0, 250)}`,
-    priority: "default",
-    tags: "envelope",
+    priority: "urgent",
+    tags: "envelope,rotating_light",
     clickUrl: `${getOrigin(req)}/?adminThread=${encodeURIComponent(thread.threadId)}#admin`
   });
 
@@ -3212,11 +3220,11 @@ app.put("/api/admin/settings", requireAdmin, async (req, res) => {
 app.post("/api/admin/test-notification", requireAdmin, async (req, res) => {
   const originUrl = getOrigin(req);
   const pushRes = await sendMobilePushNotification({
-    title: "🔔 Test réussi — NEXUS SUBS",
+    title: "🚨 Test URGENT réussi — NEXUS SUBS",
     message:
-      "Votre téléphone est bien relié ! Vous recevrez ici chaque commande, urgence paiement et discussion client en direct.",
-    priority: "high",
-    tags: "iphone,tada",
+      "Votre iPhone est bien relié en priorité URGENTE ! Chaque achat, paiement et message client déclenchera une alerte prioritaire immédiate.",
+    priority: "urgent",
+    tags: "iphone,rotating_light,tada",
     clickUrl: `${originUrl}/#admin`
   });
   res.json({ ok: true, pushRes });

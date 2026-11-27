@@ -2,43 +2,77 @@ import nodemailer from "nodemailer";
 import QRCode from "qrcode";
 import { db } from "./db.js";
 
+const NTFY_PRIORITY_MAP = {
+  min: 1,
+  low: 2,
+  default: 3,
+  high: 4,
+  urgent: 5,
+  max: 5
+};
+
 /**
- * Envoie une notification push instantanée sur le téléphone de l'admin via ntfy.sh
+ * Envoie une notification push instantanée en priorité URGENTE (5) sur l'iPhone/Android de l'admin via ntfy.sh (JSON UTF-8)
  * + Webhook optionnel (Discord / Telegram / Slack).
  */
 export async function sendMobilePushNotification({
   title,
   message,
-  priority = "high",
+  priority = "urgent",
   tags = "shopping_cart,sparkles",
   clickUrl = ""
 }) {
   const cfg = db.data.settings.notifications;
   const results = { ntfy: false, webhook: false, errors: [] };
 
-  // 1. ntfy.sh Push Mobile (iOS / Android)
+  const numericPriority =
+    typeof priority === "number"
+      ? Math.min(5, Math.max(1, Math.round(priority)))
+      : NTFY_PRIORITY_MAP[String(priority || "urgent").toLowerCase()] || 5;
+
+  // 1. ntfy.sh Push Mobile (iOS Time-Sensitive / Urgent & Android) en JSON UTF-8
+  // (Le POST JSON vers la racine évite le crash Node fetch ByteString sur les emojis et accents français)
   if (cfg.ntfyEnabled && cfg.ntfyTopic) {
     try {
       const baseServer = (cfg.ntfyServer || "https://ntfy.sh").replace(/\/+$/, "");
-      const url = `${baseServer}/${encodeURIComponent(cfg.ntfyTopic)}`;
-      const headers = {
-        Title: title.replace(/[\r\n]+/g, " ").slice(0, 140),
-        Priority: priority,
-        Tags: tags
+      const tagList = Array.isArray(tags)
+        ? tags.map((t) => String(t).trim()).filter(Boolean)
+        : String(tags || "")
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean);
+
+      const payload = {
+        topic: String(cfg.ntfyTopic).trim(),
+        title: String(title || "Alerte NEXUS SUBS").replace(/[\r\n]+/g, " ").slice(0, 140),
+        message: String(message || "").slice(0, 3500),
+        priority: numericPriority,
+        tags: tagList
       };
-      if (clickUrl) {
-        headers.Click = clickUrl;
-        headers.Actions = `view, Ouvrir & Livrer, ${clickUrl}, clear=true`;
+
+      if (clickUrl && /^https?:\/\//i.test(clickUrl)) {
+        payload.click = clickUrl;
+        payload.actions = [
+          {
+            action: "view",
+            label: "Ouvrir l'Admin",
+            url: clickUrl,
+            clear: true
+          }
+        ];
       }
 
-      const resp = await fetch(url, {
+      const resp = await fetch(baseServer, {
         method: "POST",
-        headers,
-        body: message
+        headers: {
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        body: JSON.stringify(payload)
       });
       results.ntfy = resp.ok;
       if (!resp.ok) {
-        results.errors.push(`ntfy HTTP ${resp.status}`);
+        const errBody = await resp.text().catch(() => "");
+        results.errors.push(`ntfy HTTP ${resp.status}${errBody ? `: ${errBody.slice(0, 120)}` : ""}`);
       }
     } catch (err) {
       results.errors.push(`ntfy: ${err.message}`);

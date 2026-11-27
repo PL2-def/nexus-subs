@@ -1362,9 +1362,9 @@ class AdminController {
       <form id="admin-settings-master-form" class="admin-integrations-stack">
         <div class="integration-panel highlight-integration">
           <div class="integration-head">
-            <span class="legal-tag">iOS &amp; Android • Gratuit</span>
-            <h2>📲 Notifications instantanées sur votre téléphone</h2>
-            <p>Installez l'application gratuite <strong>ntfy</strong> sur votre téléphone et scannez ce QR Code. Chaque commande, urgence paiement ou message client fait vibrer votre téléphone avec un lien direct d'ouverture !</p>
+            <span class="legal-tag">iPhone (iOS) &amp; Android • Priorité URGENTE (5/5)</span>
+            <h2>🚨 Notifications urgentes sur votre iPhone</h2>
+            <p>Chaque <strong>achat</strong>, <strong>paiement</strong> et <strong>message client</strong> envoie immédiatement une alerte en <strong>priorité urgente (Time-Sensitive iOS)</strong> sur votre iPhone via l'application gratuite <strong>ntfy</strong>.</p>
           </div>
 
           <div class="ntfy-setup-grid">
@@ -1376,7 +1376,7 @@ class AdminController {
             <div class="ntfy-fields-col">
               <label class="inline-check-pill">
                 <input type="checkbox" id="cfg-ntfy-enabled" ${s.notifications.ntfyEnabled ? "checked" : ""} />
-                <span>Activer les alertes téléphone</span>
+                <span>Activer les alertes urgentes sur iPhone</span>
               </label>
               <div class="form-row">
                 <div class="form-group">
@@ -1392,9 +1392,21 @@ class AdminController {
                 <label class="form-label">Webhook Discord / Slack (facultatif)</label>
                 <input type="url" id="cfg-webhook-url" class="form-control" value="${escapeHtml(s.notifications.webhookUrl || "")}" placeholder="https://discord.com/api/webhooks/..." />
               </div>
-              <button type="button" class="btn btn-secondary btn-xs" style="align-self:flex-start;" id="btn-test-phone-push">
-                📲 Envoyer une notification test sur mon téléphone
-              </button>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+                <button type="button" class="btn btn-secondary btn-xs" id="btn-test-phone-push">
+                  🚨 Envoyer une alerte URGENTE de test sur mon iPhone
+                </button>
+                <a class="btn btn-secondary btn-xs" href="ntfy://ntfy.sh/${encodeURIComponent(s.notifications.ntfyTopic || "")}">
+                  📲 Ouvrir directement dans l'app ntfy (iPhone)
+                </a>
+              </div>
+              <div style="margin-top:8px;padding:10px 12px;border-radius:10px;background:rgba(139,92,246,0.1);border:1px solid rgba(139,92,246,0.28);font-size:12px;line-height:1.5;color:#cbd5e1;">
+                <strong style="color:#f8fafc;">Configuration iPhone (1 minute) :</strong><br />
+                1. Téléchargez <strong>ntfy</strong> gratuitement sur l'App Store.<br />
+                2. Ouvrez <strong>ntfy</strong> → touchez <strong>+</strong> → collez le sujet privé <code>${escapeHtml(s.notifications.ntfyTopic)}</code>.<br />
+                3. Dans <strong>Réglages iPhone → Notifications → ntfy</strong> : activez <strong>Notifications urgentes (Sensibles au temps)</strong> + <strong>Sons</strong>.<br />
+                4. Dans <strong>Réglages → Concentration → Ne pas déranger → Apps</strong> : autorisez <strong>ntfy</strong> pour ne rien manquer.
+              </div>
             </div>
           </div>
         </div>
