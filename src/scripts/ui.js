@@ -276,6 +276,12 @@ export function openProductDetail(productId) {
   if (!dialog.open) dialog.showModal();
 }
 
+export function syncDrawerScrollLock() {
+  const cartOpen = document.getElementById("cart-drawer")?.classList.contains("open");
+  const mobileOpen = document.getElementById("mobile-nav-drawer")?.classList.contains("open");
+  document.documentElement.classList.toggle("drawer-scroll-lock", Boolean(cartOpen || mobileOpen));
+}
+
 export function openCartDrawer() {
   const drawer = document.getElementById("cart-drawer");
   const overlay = document.getElementById("cart-overlay");
@@ -283,11 +289,13 @@ export function openCartDrawer() {
   renderCartDrawer();
   drawer.classList.add("open");
   overlay.classList.add("open");
+  syncDrawerScrollLock();
 }
 
 export function closeCartDrawer() {
   document.getElementById("cart-drawer")?.classList.remove("open");
   document.getElementById("cart-overlay")?.classList.remove("open");
+  syncDrawerScrollLock();
 }
 
 export function renderCartDrawer() {

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Mobile Drawer & Responsive Breakpoints
+   Mobile Drawer & Responsive Breakpoints (PC, Tablette & Téléphone)
    ========================================================================== */
 .mobile-nav-overlay {
   position: fixed;
@@ -21,9 +21,9 @@
   position: fixed;
   top: 0;
   left: 0;
-  width: 84%;
-  max-width: 320px;
+  width: min(86vw, 340px);
   height: 100vh;
+  height: 100dvh;
   background: var(--bg-surface);
   border-right: 1px solid var(--border-medium);
   z-index: 251;
@@ -31,7 +31,7 @@
   flex-direction: column;
   transform: translateX(-100%);
   transition: transform var(--transition-normal);
-  padding: 1.35rem;
+  padding: max(1.2rem, var(--safe-top)) 1.25rem max(1.2rem, var(--safe-bottom)) max(1.25rem, var(--safe-left));
 }
 
 .mobile-nav-drawer.open {
@@ -43,15 +43,19 @@
   align-items: center;
   justify-content: space-between;
   padding-bottom: 1rem;
-  margin-bottom: 1.25rem;
+  margin-bottom: 1.15rem;
   border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
 }
 
 .mobile-nav-links {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .mobile-nav-link {
@@ -65,6 +69,7 @@
   color: var(--text-secondary);
   text-align: left;
   width: 100%;
+  flex-shrink: 0;
 }
 
 .mobile-nav-link:hover {
@@ -75,8 +80,75 @@
 .mobile-nav-footer {
   padding-top: 1rem;
   border-top: 1px solid var(--border-light);
+  flex-shrink: 0;
 }
 
+/* ==========================================================================
+   Grands écrans PC (>= 1400px)
+   ========================================================================== */
+@media (min-width: 1400px) {
+  :root {
+    --container-max: 1320px;
+  }
+
+  .products-grid {
+    gap: 2rem;
+  }
+
+  .admin-discussions-split {
+    grid-template-columns: 370px 1fr;
+  }
+
+  dialog:modal.checkout-modal-container,
+  dialog:modal.order-live-modal-container {
+    max-width: 1040px;
+  }
+
+  dialog:modal.admin-modal-container {
+    max-width: 1140px;
+  }
+}
+
+/* ==========================================================================
+   PC portables compacts / fenêtres scindées (<= 1200px)
+   ========================================================================== */
+@media (max-width: 1200px) {
+  .nav-desktop {
+    gap: 0.95rem;
+  }
+
+  .nav-link {
+    font-size: 0.86rem;
+  }
+
+  .header-actions {
+    gap: 0.42rem;
+  }
+
+  .btn-header-orders,
+  .btn-header-cart,
+  .btn-header-account {
+    padding: 0 0.65rem;
+    font-size: 0.82rem;
+  }
+
+  .btn-header-orders[data-action="open-discussion"] .orders-btn-label,
+  .promo-ribbon-right {
+    display: none;
+  }
+
+  .floating-chat-launcher {
+    padding: 0.65rem 0.95rem;
+    font-size: 0.82rem;
+    bottom: max(0.9rem, var(--safe-bottom));
+    right: max(0.9rem, var(--safe-right));
+    left: auto;
+  }
+}
+
+/* ==========================================================================
+   Tablettes & petits écrans (<= 1024px)
+   ========================================================================== */
 @media (max-width: 1024px) {
   .nav-desktop,
   .promo-ribbon-right {
@@ -89,26 +161,151 @@
 
   .products-grid,
   .hero-metrics-grid,
-  .why-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .prod-edit-grid {
+  .why-grid,
+  .prod-edit-grid,
+  .fraud-dims-grid,
+  .admin-kpi-row.four-cols,
+  .journey-kpis-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 
   .checkout-body,
   .order-live-body,
   .admin-deliver-grid,
-  .support-wrapper {
+  .support-wrapper,
+  .guide-steps-cards,
+  .guide-rescue-grid {
     grid-template-columns: 1fr;
+  }
+
+  .checkout-summary-sidebar {
+    position: static;
+  }
+
+  .checkout-mobile-summary-bar {
+    display: flex;
+  }
+
+  .support-wrapper {
+    padding: clamp(1.25rem, 4vw, 2rem);
+    gap: 1.75rem;
   }
 
   .footer-top {
     grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+  }
+
+  .admin-discussions-split {
+    grid-template-columns: 300px 1fr;
   }
 }
 
+/* ==========================================================================
+   Vue maître-détail Admin sur tablette / mobile (<= 860px)
+   ========================================================================== */
+@media (max-width: 860px) {
+  .disc-admin-filters-bar,
+  .admin-filter-pills,
+  .customers-toolbar .admin-filter-pills {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    max-width: 100%;
+    padding-bottom: 0.2rem;
+  }
+
+  .disc-admin-filters-bar::-webkit-scrollbar,
+  .admin-filter-pills::-webkit-scrollbar {
+    display: none;
+  }
+
+  .disc-admin-filters-bar .filter-pill,
+  .admin-filter-pills .filter-pill {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .admin-discussions-split {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .admin-discussions-split:not(.mobile-detail-open) .admin-disc-list-pane {
+    max-height: none;
+  }
+
+  .admin-discussions-split:not(.mobile-detail-open) .admin-disc-detail-pane {
+    display: none;
+  }
+
+  .admin-discussions-split.mobile-detail-open .admin-disc-list-pane {
+    display: none;
+  }
+
+  .admin-discussions-split.mobile-detail-open .admin-disc-detail-pane {
+    display: flex;
+  }
+
+  .admin-discussions-split.mobile-detail-open .mobile-back-threads-btn {
+    display: inline-flex;
+    align-self: flex-start;
+  }
+}
+
+/* ==========================================================================
+   Ergonomie Tactile & Anti-Zoom iOS Safari
+   ========================================================================== */
+@media (pointer: coarse), (max-width: 768px) {
+  :is(input, select, textarea):not([type="checkbox"], [type="radio"]) {
+    font-size: max(16px, 1rem);
+  }
+}
+
+@media (pointer: coarse) {
+  .qty-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .cart-close-btn,
+  .btn-close-dialog,
+  .mobile-nav-close,
+  .cart-item-remove,
+  .toast-close {
+    min-width: 42px;
+    min-height: 42px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .btn-copy-sm {
+    min-height: 36px;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.76rem;
+  }
+
+  .promo-code-chip {
+    min-height: 34px;
+    padding: 0.25rem 0.65rem;
+  }
+
+  .filter-pill {
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .flag-dismiss-x {
+    min-width: 24px;
+    min-height: 24px;
+  }
+}
+
+/* ==========================================================================
+   Téléphones (<= 768px)
+   ========================================================================== */
 @media (max-width: 768px) {
   :root {
     --header-height: var(--mobile-header-height);
@@ -122,17 +319,12 @@
     justify-content: center;
   }
 
-  .container {
-    padding: 0 1rem;
-  }
-
   .cart-badge-text,
-  .orders-btn-label {
+  .orders-btn-label,
+  .account-btn-label,
+  .admin-btn-label,
+  .floating-chat-label {
     display: none;
-  }
-
-  .hero-section {
-    padding: 3rem 0 2.5rem;
   }
 
   .hero-cta-row {
@@ -143,17 +335,24 @@
     width: 100%;
   }
 
+  .hero-metrics-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.75rem;
+    padding: 1rem;
+  }
+
   .products-grid,
   .steps-grid,
   .why-grid,
-  .hero-metrics-grid,
   .form-row,
   .detail-benefits-grid,
   .admin-kpi-row,
-  .prod-edit-grid,
   .sepa-qr-and-fields,
   .ntfy-setup-grid,
-  .footer-top {
+  .footer-top,
+  .account-security-grid,
+  .fraud-dims-grid,
+  .admin-kpi-row.four-cols {
     grid-template-columns: 1fr;
   }
 
@@ -167,69 +366,17 @@
     align-items: stretch;
   }
 
-  .order-live-stepper {
-    flex-direction: column;
-    align-items: flex-start;
-    padding: 0.85rem 1.15rem;
+  .mwg-tablist-scroller {
+    padding: 0 0.75rem;
   }
 
-  .stepper-line {
-    display: none;
+  .mwg-tablist-scroller [role="tab"] {
+    padding: 0.85rem;
+    font-size: 0.83rem;
   }
 
-  .checkout-header,
-  .admin-modal-header,
-  .legal-modal-header,
-  .checkout-body,
-  .order-live-body,
-  .admin-dashboard-body,
-  .admin-deliver-grid,
-  .modal-product-body,
-  .modal-product-header,
-  .modal-product-footer {
-    padding-left: 1.1rem;
-    padding-right: 1.1rem;
-  }
-
-  .faq-body {
-    padding-left: 1.35rem;
-  }
-
-  .toast-container {
-    left: 1rem;
-    right: 1rem;
-    bottom: 1rem;
-  }
-
-  .toast {
-    max-width: 100%;
-    width: 100%;
-  }
-}
-
-
-@media (max-width: 1024px) {
-  .guide-steps-cards,
-  .guide-rescue-grid,
-  .admin-discussions-split {
-    grid-template-columns: 1fr;
-  }
-
-  .admin-disc-list-pane {
-    max-height: 230px;
-  }
-}
-
-@media (max-width: 768px) {
-  .admin-btn-label,
-  .floating-chat-label {
-    display: none;
-  }
-
-  .floating-chat-launcher {
-    padding: 0.8rem 0.95rem;
-    bottom: 1rem;
-    left: 1rem;
+  .guide-panel-inner {
+    padding: 1.25rem;
   }
 
   .disc-identity-bar,
@@ -237,29 +384,295 @@
     grid-template-columns: 1fr;
   }
 
-  .guide-panel-inner {
-    padding: 1.25rem;
+  .faq-body {
+    padding-left: 1.35rem;
+  }
+
+  .floating-chat-launcher {
+    width: 48px;
+    height: 48px;
+    padding: 0;
+    justify-content: center;
+    bottom: max(0.85rem, var(--safe-bottom));
+    right: max(0.85rem, var(--safe-right));
+    left: auto;
+  }
+
+  .toast-container {
+    left: max(0.85rem, var(--safe-left));
+    right: max(0.85rem, var(--safe-right));
+    bottom: calc(4.5rem + var(--safe-bottom));
+  }
+
+  .toast {
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
   }
 }
 
-
-@media (max-width: 1024px) {
-  .fraud-dims-grid,
-  .admin-kpi-row.four-cols {
-    grid-template-columns: repeat(2, 1fr);
+/* ==========================================================================
+   Grands & Petits Téléphones (<= 640px) — Header compact & Bottom-Sheets
+   ========================================================================== */
+@media (max-width: 640px) {
+  .container {
+    padding-inline: max(0.85rem, var(--safe-left)) max(0.85rem, var(--safe-right));
   }
-  .journey-kpis-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
 
-@media (max-width: 768px) {
-  .account-btn-label {
+  .header-container {
+    gap: 0.5rem;
+  }
+
+  .brand-logo {
+    gap: 0.45rem;
+  }
+
+  .logo-badge {
+    width: 32px;
+    height: 32px;
+  }
+
+  .brand-name {
+    font-size: 0.96rem;
+  }
+
+  .header-actions {
+    gap: 0.35rem;
+  }
+
+  .header-actions > [data-action="open-discussion"],
+  .account-chevron {
     display: none;
   }
-  .account-security-grid,
-  .fraud-dims-grid,
-  .admin-kpi-row.four-cols {
+
+  .btn-header-orders,
+  .btn-header-account,
+  .btn-header-cart,
+  .btn-mobile-toggle {
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    min-height: 38px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .btn-header-orders::after,
+  .btn-header-account::after,
+  .btn-header-cart::after,
+  .btn-mobile-toggle::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+  }
+
+  .btn-header-account.account-trigger-logged {
+    padding-inline-start: 0;
+  }
+
+  .btn-header-cart .cart-count-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+  }
+
+  dialog:modal.modal-container {
+    width: 100%;
+    max-width: 100%;
+    max-height: 94vh;
+    max-height: 94dvh;
+    margin: auto 0 0 0;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+  }
+
+  .checkout-header,
+  .admin-modal-header,
+  .legal-modal-header,
+  .modal-product-header {
+    padding: 1rem 1.1rem;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    gap: 0.65rem;
+  }
+
+  :is(.checkout-header, .admin-modal-header):has(.header-dialog-btns, .admin-header-actions) {
+    flex-wrap: wrap;
+  }
+
+  .checkout-header-title,
+  .admin-header-title {
+    flex: 1 1 200px;
+    min-width: 0;
+  }
+
+  .btn-close-dialog {
+    flex-shrink: 0;
+  }
+
+  .checkout-body,
+  .order-live-body,
+  .order-lookup-body,
+  .disc-dialog-body,
+  .account-modal-body,
+  .legal-modal-body,
+  .admin-modal-body,
+  .admin-dashboard-body,
+  .admin-deliver-grid,
+  .modal-product-body {
+    padding: 1.1rem;
+    padding-bottom: max(1.1rem, var(--safe-bottom));
+  }
+
+  .admin-tabs-nav,
+  .legal-tabs-row,
+  .account-auth-tabs {
+    padding: 0.4rem 0.85rem 0;
+  }
+
+  .checkout-title,
+  .admin-title,
+  .legal-title,
+  .modal-product-title {
+    font-size: 1.1rem;
+  }
+
+  .header-dialog-btns,
+  .admin-header-actions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .modal-product-footer {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0.95rem 1.1rem max(0.95rem, var(--safe-bottom));
+    gap: 0.75rem;
+  }
+
+  .modal-footer-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  #btn-detail-buy-now {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .order-live-stepper {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.35rem;
+    padding: 0.65rem 0.9rem;
+  }
+
+  .stepper-line {
+    display: none;
+  }
+
+  .stepper-node {
+    flex-direction: column;
+    text-align: center;
+    font-size: 0.72rem;
+    gap: 0.2rem;
+  }
+
+  .savings-highlight-banner {
+    padding: 1.2rem;
+  }
+
+  .savings-highlight-banner .btn,
+  .btn-support-submit,
+  .guide-rescue-actions .btn {
+    width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .catalog-filter-bar {
+    display: flex;
+    width: 100%;
+    border-radius: var(--radius-lg);
+  }
+
+  .catalog-filter-bar .filter-pill {
+    flex: 1 1 auto;
+    justify-content: center;
+    text-align: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .product-card {
+    padding: 1.3rem;
+    border-radius: var(--radius-lg);
+  }
+
+  .product-tagline {
+    min-height: 0;
+  }
+
+  .newsletter-form-group {
+    flex-direction: column;
+  }
+
+  .newsletter-form-group .btn {
+    width: 100%;
+  }
+}
+
+@media (max-width: 400px) {
+  .prod-edit-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 380px) {
+  .container {
+    padding-inline: max(0.75rem, var(--safe-left)) max(0.75rem, var(--safe-right));
+  }
+
+  .account-menu-anchor-wrap {
+    display: none;
+  }
+
+  .logo-badge {
+    width: 30px;
+    height: 30px;
+  }
+
+  .brand-name {
+    font-size: 0.92rem;
+  }
+}
+
+@media (max-width: 340px) {
+  .hero-metrics-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ==========================================================================
+   Clavier virtuel mobile ouvert dans la discussion en direct
+   ========================================================================== */
+@media (max-height: 620px) and (max-width: 768px) {
+  .disc-topic-bar {
+    padding: 0.45rem 0.65rem;
+  }
+
+  .disc-identity-bar {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+  }
+
+  .disc-messages-viewport {
+    min-height: 95px;
+    padding: 0.65rem;
   }
 }

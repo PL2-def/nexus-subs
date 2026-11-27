@@ -225,6 +225,7 @@ class AdminController {
     this.customerFilter = "all"; // 'all' | 'high_risk' | 'vip' | 'suspended' | 'visitors'
     this.customerSearch = "";
     this.selectedThreadId = null;
+    this.mobileDetailOpen = false;
     this.adminSse = null;
     this.pendingDeepLinkOrderId = null;
     this.pendingDeepLinkThreadId = null;
@@ -321,6 +322,7 @@ class AdminController {
     if (threadId) {
       this.pendingDeepLinkThreadId = threadId;
       this.selectedThreadId = threadId;
+      this.mobileDetailOpen = true;
       this.activeTab = "discussions";
     }
 
@@ -627,7 +629,7 @@ class AdminController {
             </div>
           `
           : `
-            <div class="admin-discussions-split">
+            <div class="admin-discussions-split ${this.mobileDetailOpen ? "mobile-detail-open" : ""}">
               <!-- Colonne Gauche : Liste conversations avec flags précis & score fraude -->
               <div class="admin-disc-list-pane">
                 ${filtered
@@ -702,6 +704,9 @@ class AdminController {
 
     return `
       <div class="disc-detail-header">
+        <button type="button" class="btn btn-secondary btn-xs mobile-back-threads-btn" id="btn-admin-back-threads">
+          ← Liste des discussions
+        </button>
         <div class="disc-detail-client-meta">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:0.6rem;flex-wrap:wrap;">
             <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
@@ -1597,14 +1602,21 @@ class AdminController {
     container.querySelectorAll("[data-disc-filter]").forEach((btn) => {
       btn.addEventListener("click", () => {
         this.discFilter = btn.getAttribute("data-disc-filter");
+        this.mobileDetailOpen = false;
         this.render();
       });
+    });
+
+    container.querySelector("#btn-admin-back-threads")?.addEventListener("click", () => {
+      this.mobileDetailOpen = false;
+      this.render();
     });
 
     container.querySelectorAll("[data-select-thread]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const tid = btn.getAttribute("data-select-thread");
         this.selectedThreadId = tid;
+        this.mobileDetailOpen = true;
         await fetch(`/api/admin/discussions/${encodeURIComponent(tid)}/read`, {
           method: "POST",
           headers: this.authHeaders()

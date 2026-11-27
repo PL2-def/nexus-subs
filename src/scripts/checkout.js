@@ -93,6 +93,16 @@ function renderCheckoutForm() {
     </div>
 
     <div class="checkout-body">
+      <div class="checkout-mobile-summary-bar">
+        <div>
+          <strong>🛒 ${summary.itemCount} article${summary.itemCount > 1 ? "s" : ""}</strong>
+          <span> • Total : <strong class="grand-price">${summary.total} €</strong></span>
+        </div>
+        <button type="button" class="inline-legal-btn" id="btn-scroll-checkout-promo">
+          ${summary.coupon ? `✓ Code ${escapeHtml(summary.coupon.code)}` : "🏷️ Code promo / Détail ↓"}
+        </button>
+      </div>
+
       <form id="checkout-order-form" class="checkout-form">
         <!-- Champ Honeypot Anti-Robot invisible -->
         <input type="text" id="checkout-hp-field" name="company_website" class="visually-hidden" tabindex="-1" autocomplete="off" aria-hidden="true" />
@@ -310,6 +320,15 @@ function renderCheckoutForm() {
   container.querySelector("#btn-checkout-signin")?.addEventListener("click", async () => {
     await closeDialogSmoothly(dialog);
     account.openModal("login");
+  });
+
+  container.querySelector("#btn-scroll-checkout-promo")?.addEventListener("click", () => {
+    const sidebar = container.querySelector(".checkout-summary-sidebar");
+    sidebar?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const promoInput = container.querySelector("#checkout-promo-input");
+    if (promoInput && !promoInput.disabled) {
+      setTimeout(() => promoInput.focus({ preventScroll: true }), 260);
+    }
   });
 
   container.querySelectorAll('input[name="paymentMethod"]').forEach((radio) => {

@@ -58,7 +58,14 @@
   --transition-normal: 240ms cubic-bezier(0.16, 1, 0.3, 1);
 
   /* Layout */
-  --container-max: 1240px;
+  --container-max: 1280px;
+  --container-pad: clamp(1rem, 3vw, 2rem);
+  --section-pad-y: clamp(2.75rem, 5vw, 4.75rem);
   --header-height: 72px;
   --mobile-header-height: 64px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --target-size: 24px;
 }

@@ -3,7 +3,7 @@ import { store } from "./store.js";
 import { initAllDialogs, initFormValidationAria, showToast } from "./mwg-helpers.js";
 import { siteTracker } from "./site-tracker.js";
 import { account } from "./account.js";
-import { renderProductGrid, openProductDetail, openCartDrawer, closeCartDrawer, renderCartDrawer } from "./ui.js";
+import { renderProductGrid, openProductDetail, openCartDrawer, closeCartDrawer, renderCartDrawer, syncDrawerScrollLock } from "./ui.js";
 import { initCheckoutModal, handlePaymentReturnQuery } from "./checkout.js";
 import { initOrderTrackerModal } from "./order-dialog.js";
 import { setupLegalModal } from "./legal.js";
@@ -189,6 +189,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   const mobileNav = document.getElementById("mobile-nav-drawer");
   const mobileOverlay = document.getElementById("mobile-nav-overlay");
+  const mobileToggleBtn = document.getElementById("btn-mobile-menu-toggle");
 
   function toggleMobileMenu() {
     const open = mobileNav?.classList.contains("open");
@@ -196,16 +197,99 @@ document.addEventListener("DOMContentLoaded", async () => {
     else {
       mobileNav?.classList.add("open");
       mobileOverlay?.classList.add("open");
+      mobileToggleBtn?.setAttribute("aria-expanded", "true");
+      syncDrawerScrollLock();
     }
   }
 
   function closeMobileMenu() {
     mobileNav?.classList.remove("open");
     mobileOverlay?.classList.remove("open");
+    mobileToggleBtn?.setAttribute("aria-expanded", "false");
+    syncDrawerScrollLock();
   }
 
   mobileOverlay?.addEventListener("click", closeMobileMenu);
   mobileNav?.querySelectorAll("a").forEach((a) => a.addEventListener("click", closeMobileMenu));
+
+  // Fermer automatiquement le tiroir mobile si le viewport repasse en mode bureau (> 1024px)
+  const desktopMq = window.matchMedia("(min-width: 1025px)");
+  desktopMq.addEventListener("change", (ev) => {
+    if (ev.matches) closeMobileMenu();
+  });
+
+  // Gestes tactiles natifs (swipe-to-close) sur les tiroirs latéraux
+  const attachDrawerSwipe = (el, direction, onClose) => {
+    if (!el) return;
+    let startX = 0;
+    let startY = 0;
+    let tracking = false;
+    el.addEventListener(
+      "touchstart",
+      (e) => {
+        if (e.touches.length !== 1) return;
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        tracking = true;
+      },
+      { passive: true }
+    );
+    el.addEventListener(
+      "touchend",
+      (e) => {
+        if (!tracking || !e.changedTouches.length) return;
+        tracking = false;
+        const dx = e.changedTouches[0].clientX - startX;
+        const dy = e.changedTouches[0].clientY - startY;
+        if (Math.abs(dx) > Math.abs(dy) * 1.5) {
+          if (direction === "left" && dx < -55) onClose();
+          if (direction === "right" && dx > 55) onClose();
+        }
+      },
+      { passive: true }
+    );
+  };
+  attachDrawerSwipe(mobileNav, "left", closeMobileMenu);
+  attachDrawerSwipe(document.getElementById("cart-drawer"), "right", closeCartDrawer);
+
+  // Scrollspy discret sur la navigation PC
+  const navLinks = Array.from(document.querySelectorAll('.nav-desktop .nav-link[href^="#"]'));
+  const spyTargets = navLinks
+    .map((link) => {
+      const id = link.getAttribute("href")?.slice(1);
+      const sec = id ? document.getElementById(id) : null;
+      return sec ? { link, sec } : null;
+    })
+    .filter(Boolean);
+
+  if (spyTargets.length && "IntersectionObserver" in window) {
+    const visibleMap = new Map();
+    const setActiveNav = (activeLink) => {
+      navLinks.forEach((l) => {
+        if (l === activeLink) l.setAttribute("aria-current", "true");
+        else l.removeAttribute("aria-current");
+      });
+    };
+    const spyObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          visibleMap.set(entry.target, entry.isIntersecting ? entry.intersectionRatio : 0);
+        });
+        let best = null;
+        let bestRatio = 0;
+        for (const item of spyTargets) {
+          const r = visibleMap.get(item.sec) || 0;
+          if (r > bestRatio) {
+            bestRatio = r;
+            best = item.link;
+          }
+        }
+        setActiveNav(best);
+      },
+      { rootMargin: "-20% 0px -55% 0px", threshold: [0, 0.25, 0.5] }
+    );
+    spyTargets.forEach(({ sec }) => spyObserver.observe(sec));
+  }
 
   // Formulaire Support 7j/7 (ouvre également un fil dans le menu Discussions !)
   const supportForm = document.getElementById("support-contact-form");
