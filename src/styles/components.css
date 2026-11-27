@@ -1628,11 +1628,62 @@ dialog[open].modal-container {
 }
 
 .admin-modal-container {
-  max-width: 1040px;
+  width: 100vw;
+  width: 100dvw;
+  max-width: 100vw;
+  max-width: 100dvw;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  background: var(--bg-main);
+}
+
+dialog:modal.admin-modal-container {
+  width: 100vw;
+  width: 100dvw;
+  max-width: 100vw;
+  max-width: 100dvw;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  margin: 0;
+  border-radius: 0;
+  border: none;
+}
+
+.admin-modal-container .admin-modal-header {
+  background: var(--bg-surface);
+  padding-top: max(1rem, var(--safe-top));
+  padding-inline: max(1.75rem, var(--safe-left)) max(1.75rem, var(--safe-right));
+}
+
+.admin-modal-container .admin-modal-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.admin-modal-container .admin-login-form {
+  width: 100%;
+  max-width: 440px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-xl);
+  padding: clamp(1.35rem, 4vw, 2rem);
+  box-shadow: var(--shadow-lg);
+}
+
+.admin-mobile-bottom-nav {
+  display: none;
 }
 
 .admin-deliver-modal-container {
-  max-width: 960px;
+  max-width: 1040px;
 }
 
 /* Product Detail Modal */
@@ -3742,17 +3793,18 @@ dialog[open].modal-container {
 
 .admin-discussions-split {
   display: grid;
-  grid-template-columns: 340px 1fr;
+  grid-template-columns: 360px 1fr;
   gap: 1.15rem;
-  min-height: 470px;
+  min-height: calc(100dvh - 235px);
 }
 
 .admin-disc-list-pane {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
-  max-height: 520px;
+  max-height: calc(100dvh - 235px);
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-right: 0.25rem;
 }
 

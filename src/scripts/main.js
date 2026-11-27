@@ -50,17 +50,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   await handlePaymentReturnQuery();
 
-  // Ouverture directe depuis notification mobile Admin (?adminOrder=... ou ?adminThread=...)
+  // Ouverture directe depuis notification mobile Admin (?adminOrder=... ou ?adminThread=...), /admin ou #admin
   const params = new URLSearchParams(window.location.search);
   const adminOrder = params.get("adminOrder");
   const adminThread = params.get("adminThread");
+  const isAdminPath = /^\/admin\/?$/i.test(window.location.pathname);
   if (adminOrder) {
-    window.history.replaceState({}, "", window.location.pathname);
+    window.history.replaceState({}, "", "/");
     admin.openModal("orders", { orderId: adminOrder });
   } else if (adminThread) {
-    window.history.replaceState({}, "", window.location.pathname);
+    window.history.replaceState({}, "", "/");
     admin.openModal("discussions", { threadId: adminThread });
-  } else if (window.location.hash === "#admin") {
+  } else if (window.location.hash === "#admin" || isAdminPath) {
     admin.openModal();
   }
 

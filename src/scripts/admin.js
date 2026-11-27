@@ -465,6 +465,7 @@ class AdminController {
           </div>
         </div>
         <div class="admin-header-actions">
+          <button type="button" class="btn btn-outline btn-xs" id="btn-admin-refresh" aria-label="Actualiser les données" title="Actualiser">↻</button>
           <button type="button" class="btn btn-outline btn-xs" id="btn-admin-logout">Déconnexion</button>
           <button type="button" class="btn-close-dialog" data-close-admin aria-label="Fermer">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -512,14 +513,56 @@ class AdminController {
       <div class="admin-dashboard-body">
         ${this.renderTabBody(d, savedDraft)}
       </div>
+
+      <!-- Barre de navigation inférieure dédiée au pouce sur mobile -->
+      <nav class="admin-mobile-bottom-nav" aria-label="Navigation rapide administration">
+        <button type="button" class="admin-bnav-btn ${this.activeTab === "discussions" ? "active" : ""}" data-admin-tab="discussions" aria-current="${this.activeTab === "discussions" ? "page" : "false"}">
+          <span class="bnav-ico" aria-hidden="true">💬</span>
+          <span class="bnav-lbl">Chats</span>
+          ${(d.stats.urgentDiscussionsCount || 0) > 0 ? `<span class="bnav-badge">${d.stats.urgentDiscussionsCount}</span>` : ""}
+        </button>
+        <button type="button" class="admin-bnav-btn ${this.activeTab === "orders" ? "active" : ""}" data-admin-tab="orders" aria-current="${this.activeTab === "orders" ? "page" : "false"}">
+          <span class="bnav-ico" aria-hidden="true">⚡</span>
+          <span class="bnav-lbl">Cmd</span>
+          ${d.stats.pendingDeliveries > 0 ? `<span class="bnav-badge">${d.stats.pendingDeliveries}</span>` : ""}
+        </button>
+        <button type="button" class="admin-bnav-btn ${this.activeTab === "customers" ? "active" : ""}" data-admin-tab="customers" aria-current="${this.activeTab === "customers" ? "page" : "false"}">
+          <span class="bnav-ico" aria-hidden="true">👤</span>
+          <span class="bnav-lbl">Clients</span>
+          ${(d.stats.highRiskCustomers || 0) > 0 ? `<span class="bnav-badge">${d.stats.highRiskCustomers}</span>` : ""}
+        </button>
+        <button type="button" class="admin-bnav-btn ${this.activeTab === "catalog" ? "active" : ""}" data-admin-tab="catalog" aria-current="${this.activeTab === "catalog" ? "page" : "false"}">
+          <span class="bnav-ico" aria-hidden="true">📦</span>
+          <span class="bnav-lbl">Offres</span>
+        </button>
+        <button type="button" class="admin-bnav-btn ${this.activeTab === "coupons" ? "active" : ""}" data-admin-tab="coupons" aria-current="${this.activeTab === "coupons" ? "page" : "false"}">
+          <span class="bnav-ico" aria-hidden="true">🏷️</span>
+          <span class="bnav-lbl">Promos</span>
+        </button>
+        <button type="button" class="admin-bnav-btn ${this.activeTab === "integrations" ? "active" : ""}" data-admin-tab="integrations" aria-current="${this.activeTab === "integrations" ? "page" : "false"}">
+          <span class="bnav-ico" aria-hidden="true">📲</span>
+          <span class="bnav-lbl">Config</span>
+        </button>
+      </nav>
     `;
 
     container.querySelector("[data-close-admin]")?.addEventListener("click", () => closeDialogSmoothly(dialog));
     container.querySelector("#btn-admin-logout")?.addEventListener("click", () => this.logout());
+    container.querySelector("#btn-admin-refresh")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      await this.refreshDashboardSilently();
+      showToast("Tableau de bord actualisé.", "info", 1800);
+      this.render({ preserveChatDraft: true });
+    });
 
     container.querySelectorAll("[data-admin-tab]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        this.activeTab = btn.getAttribute("data-admin-tab");
+        const nextTab = btn.getAttribute("data-admin-tab");
+        if (nextTab === "discussions" && this.activeTab === "discussions" && this.mobileDetailOpen) {
+          this.mobileDetailOpen = false;
+        }
+        this.activeTab = nextTab;
         this.render();
       });
     });
@@ -1611,6 +1654,36 @@ class AdminController {
       this.mobileDetailOpen = false;
       this.render();
     });
+
+    // Geste tactile swipe-droite pour revenir à la liste des discussions sur mobile
+    const detailPane = container.querySelector(".admin-disc-detail-pane");
+    if (detailPane && this.mobileDetailOpen) {
+      let sx = 0;
+      let sy = 0;
+      detailPane.addEventListener(
+        "touchstart",
+        (e) => {
+          if (e.touches.length === 1) {
+            sx = e.touches[0].clientX;
+            sy = e.touches[0].clientY;
+          }
+        },
+        { passive: true }
+      );
+      detailPane.addEventListener(
+        "touchend",
+        (e) => {
+          if (!e.changedTouches.length) return;
+          const dx = e.changedTouches[0].clientX - sx;
+          const dy = e.changedTouches[0].clientY - sy;
+          if (sx < 48 && dx > 70 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+            this.mobileDetailOpen = false;
+            this.render();
+          }
+        },
+        { passive: true }
+      );
+    }
 
     container.querySelectorAll("[data-select-thread]").forEach((btn) => {
       btn.addEventListener("click", async () => {
