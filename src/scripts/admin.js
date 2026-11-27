@@ -215,13 +215,104 @@ function renderFraudAnalyticsPanel(assessment, { openByDefault = false, compactT
   `;
 }
 
+const DOSSIER_STATUS_META = {
+  normal: { label: "Normal", cls: "st-normal" },
+  lost_goods: { label: "🆘 Bien perdu", cls: "st-lost_goods" },
+  investigating: { label: "🔎 Enquête", cls: "st-investigating" },
+  recovered: { label: "✅ Retrouvé", cls: "st-recovered" },
+  disputed: { label: "⚠️ Litige", cls: "st-disputed" }
+};
+
+function formatRelayCountdownLabel(relayDueAt) {
+  if (!relayDueAt) return "";
+  const rem = Math.max(0, Math.ceil((new Date(relayDueAt).getTime() - Date.now()) / 1000));
+  if (rem <= 0) return "Relais IA imminent…";
+  return `Relais IA dans ${rem}s`;
+}
+
+function getRelayStatusMeta(aiControl) {
+  if (!aiControl) return { mode: "human_active", label: "👤 Humain", cls: "is-human" };
+  if (aiControl.mode === "waiting_human") {
+    return {
+      mode: "waiting_human",
+      label: formatRelayCountdownLabel(aiControl.relayDueAt),
+      cls: "is-waiting",
+      relayDueAt: aiControl.relayDueAt
+    };
+  }
+  if (aiControl.mode === "ai_active") {
+    return { mode: "ai_active", label: "🤖 IA active", cls: "is-ai" };
+  }
+  return { mode: "human_active", label: "👤 Humain actif", cls: "is-human" };
+}
+
+function renderAdminChatBubble(m, customerName = "Client") {
+  const relayCls =
+    m.sender === "relay"
+      ? m.relayEvent === "human_takeover"
+        ? "msg-relay relay-human"
+        : m.relayEvent === "ai_takeover" || m.relayEvent === "ai_resume"
+        ? "msg-relay relay-ai"
+        : "msg-relay relay-waiting"
+      : "";
+  const cls =
+    m.sender === "admin"
+      ? "msg-admin"
+      : m.sender === "ai"
+      ? "msg-ai"
+      : m.sender === "relay"
+      ? relayCls
+      : m.sender === "customer"
+      ? "msg-customer"
+      : "msg-system";
+  const author =
+    m.sender === "admin"
+      ? "Vous (Admin)"
+      : m.sender === "ai"
+      ? `🤖 Assistant IA (${m.aiModel || "Gemini"})`
+      : m.sender === "relay"
+      ? m.relayEvent === "human_takeover"
+        ? "👤 REPRISE HUMAINE"
+        : m.relayEvent === "ai_takeover" || m.relayEvent === "ai_resume"
+        ? "🤖 RELAIS IA ACTIVÉ"
+        : "📩 ASSISTANCE HUMAINE DEMANDÉE"
+      : m.sender === "customer"
+      ? customerName
+      : "Système";
+  const time = new Date(m.createdAt).toLocaleString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    day: "2-digit",
+    month: "short"
+  });
+  return `
+    <div class="chat-bubble ${cls}">
+      <div class="chat-bubble-meta">
+        <strong>${escapeHtml(author)}</strong>
+        <span>${time}</span>
+      </div>
+      ${m.text ? `<div class="chat-bubble-text">${escapeHtml(m.text)}</div>` : ""}
+      ${
+        m.attachment
+          ? `<div style="margin-top:0.35rem;font-size:0.78rem;color:var(--accent-cyan-light);">Pièce jointe envoyée : <strong>${escapeHtml(m.attachment.title || m.attachment.code)}</strong></div>`
+          : ""
+      }
+    </div>
+  `;
+}
+
 class AdminController {
   constructor() {
     this.token = localStorage.getItem(ADMIN_TOKEN_KEY) || "";
     this.dashboard = null;
-    this.activeTab = "discussions"; // 'discussions' | 'orders' | 'customers' | 'catalog' | 'integrations' | 'coupons'
+    this.activeTab = "discussions"; // 'discussions' | 'dossiers' | 'orders' | 'customers' | 'catalog' | 'integrations' | 'coupons'
     this.orderFilter = "all";
     this.discFilter = "all";
+    this.dossierFilter = "all";
+    this.dossierSearch = "";
+    this.selectedDossierId = null;
+    this.mobileDossierDetailOpen = false;
+    this.adminRevealDossierSecrets = false;
     this.customerFilter = "all"; // 'all' | 'high_risk' | 'vip' | 'suspended' | 'visitors'
     this.customerSearch = "";
     this.selectedThreadId = null;
@@ -243,8 +334,12 @@ class AdminController {
           const iso = el.getAttribute("data-waiting-since");
           if (iso) el.textContent = `⏳ ${formatLiveWaitingLabel(iso)}`;
         });
+        document.querySelectorAll("[data-relay-countdown]").forEach((el) => {
+          const due = el.getAttribute("data-relay-countdown");
+          if (due) el.textContent = formatRelayCountdownLabel(due);
+        });
       }
-    }, 30000);
+    }, 1000);
   }
 
   authHeaders() {
@@ -483,6 +578,15 @@ class AdminController {
           }
         </button>
 
+        <button type="button" role="tab" aria-selected="${this.activeTab === "dossiers"}" class="admin-tab-btn ${this.activeTab === "dossiers" ? "active" : ""}" data-admin-tab="dossiers">
+          <span>📁 Dossiers</span>
+          ${
+            (d.stats.lostGoodsCount || 0) + (d.stats.orphanClaimsCount || 0) > 0
+              ? `<span class="tab-badge-count">${(d.stats.lostGoodsCount || 0) + (d.stats.orphanClaimsCount || 0)} alerte</span>`
+              : `<span class="tab-badge-count muted">${d.stats.totalDossiers ?? d.orders.length}</span>`
+          }
+        </button>
+
         <button type="button" role="tab" aria-selected="${this.activeTab === "orders"}" class="admin-tab-btn ${this.activeTab === "orders" ? "active" : ""}" data-admin-tab="orders">
           <span>⚡ Commandes &amp; Livraison</span>
           ${d.stats.pendingDeliveries > 0 ? `<span class="tab-badge-count">${d.stats.pendingDeliveries}</span>` : `<span class="tab-badge-count muted">${d.orders.length}</span>`}
@@ -502,7 +606,7 @@ class AdminController {
         </button>
 
         <button type="button" role="tab" aria-selected="${this.activeTab === "integrations"}" class="admin-tab-btn ${this.activeTab === "integrations" ? "active" : ""}" data-admin-tab="integrations">
-          <span>📲 Téléphone, Paiements &amp; Sécurité</span>
+          <span>📲 Téléphone, IA &amp; Paiements</span>
         </button>
 
         <button type="button" role="tab" aria-selected="${this.activeTab === "coupons"}" class="admin-tab-btn ${this.activeTab === "coupons" ? "active" : ""}" data-admin-tab="coupons">
@@ -520,6 +624,11 @@ class AdminController {
           <span class="bnav-ico" aria-hidden="true">💬</span>
           <span class="bnav-lbl">Chats</span>
           ${(d.stats.urgentDiscussionsCount || 0) > 0 ? `<span class="bnav-badge">${d.stats.urgentDiscussionsCount}</span>` : ""}
+        </button>
+        <button type="button" class="admin-bnav-btn ${this.activeTab === "dossiers" ? "active" : ""}" data-admin-tab="dossiers" aria-current="${this.activeTab === "dossiers" ? "page" : "false"}">
+          <span class="bnav-ico" aria-hidden="true">📁</span>
+          <span class="bnav-lbl">Dossiers</span>
+          ${(d.stats.lostGoodsCount || 0) + (d.stats.orphanClaimsCount || 0) > 0 ? `<span class="bnav-badge">${(d.stats.lostGoodsCount || 0) + (d.stats.orphanClaimsCount || 0)}</span>` : ""}
         </button>
         <button type="button" class="admin-bnav-btn ${this.activeTab === "orders" ? "active" : ""}" data-admin-tab="orders" aria-current="${this.activeTab === "orders" ? "page" : "false"}">
           <span class="bnav-ico" aria-hidden="true">⚡</span>
@@ -572,6 +681,7 @@ class AdminController {
 
   renderTabBody(d, savedDraft = "") {
     if (this.activeTab === "discussions") return this.renderDiscussionsMenu(d, savedDraft);
+    if (this.activeTab === "dossiers") return this.renderDossiersTab(d);
     if (this.activeTab === "orders") return this.renderOrdersTab(d.orders, d.stats);
     if (this.activeTab === "customers") return this.renderCustomersAntiFraudTab(d);
     if (this.activeTab === "catalog") return this.renderCatalogTab(d.products);
@@ -595,12 +705,14 @@ class AdminController {
     const countPressure = threads.filter((t) => hasFlag(t, "chargeback_threat") || hasFlag(t, "social_engineering")).length;
     const countReady = threads.filter((t) => !t.diagnostics.isResolved && hasFlag(t, "ready_to_buy")).length;
     const countVip = threads.filter((t) => hasFlag(t, "vip_loyal")).length;
+    const countAi = threads.filter((t) => !t.diagnostics.isResolved && t.aiControl?.mode === "ai_active").length;
     const countResolved = threads.filter((t) => t.diagnostics.isResolved).length;
 
     const filtered = threads.filter((t) => {
       const dg = t.diagnostics;
       if (this.discFilter === "fast_help") return !dg.isResolved && dg.needsFastHelp;
       if (this.discFilter === "waiting") return !dg.isResolved && Boolean(dg.waitingSince);
+      if (this.discFilter === "ai_active") return !dg.isResolved && t.aiControl?.mode === "ai_active";
       if (this.discFilter === "furious") return !dg.isResolved && hasFlag(t, "furious_escalation");
       if (this.discFilter === "annoyed") return !dg.isResolved && hasFlag(t, "annoyed");
       if (this.discFilter === "anxious") return !dg.isResolved && hasFlag(t, "anxious_worried");
@@ -636,6 +748,9 @@ class AdminController {
         </button>
         <button type="button" class="filter-pill ${this.discFilter === "waiting" ? "active" : ""}" data-disc-filter="waiting">
           ⏳ En attente (${countWaiting})
+        </button>
+        <button type="button" class="filter-pill pill-filter-ai ${this.discFilter === "ai_active" ? "active" : ""}" data-disc-filter="ai_active">
+          🤖 Relais IA (${countAi})
         </button>
         <button type="button" class="filter-pill pill-filter-fraud ${this.discFilter === "furious" ? "active" : ""}" data-disc-filter="furious">
           🤬 Très en colère (${countFurious})
@@ -701,6 +816,10 @@ class AdminController {
                         </div>
 
                         <div class="disc-diagnostic-badges">
+                          ${(() => {
+                            const rm = getRelayStatusMeta(t.aiControl);
+                            return `<span class="diag-badge relay-pill-mini ${rm.cls}" ${rm.relayDueAt ? `data-relay-countdown="${escapeHtml(rm.relayDueAt)}"` : ""}>${escapeHtml(rm.label)}</span>`;
+                          })()}
                           ${
                             liveWait
                               ? `<span class="diag-badge diag-wait-${dg.waitingLevel}" data-waiting-since="${escapeHtml(dg.waitingSince)}">⏳ ${escapeHtml(liveWait)}</span>`
@@ -798,6 +917,41 @@ class AdminController {
           </div>
         </div>
 
+        <!-- Barre de Contrôle Relais Humain ↔ IA Gemini -->
+        ${(() => {
+          const rm = getRelayStatusMeta(t.aiControl);
+          return `
+            <div class="admin-relay-control-bar">
+              <div class="relay-status-info">
+                <span class="relay-status-pill ${rm.cls}" ${rm.relayDueAt ? `data-relay-countdown="${escapeHtml(rm.relayDueAt)}"` : ""}>${escapeHtml(rm.label)}</span>
+                <span class="relay-status-hint">${
+                  rm.mode === "ai_active"
+                    ? "L'IA Gemini répond automatiquement au client."
+                    : rm.mode === "waiting_human"
+                    ? "En attente de votre réponse (l'IA prend le relais à la fin du chrono)."
+                    : "Vous avez la main : l'IA est silencieuse."
+                }</span>
+              </div>
+              <div class="relay-action-btns">
+                <button
+                  type="button"
+                  class="btn btn-xs btn-relay-human"
+                  data-relay-action="take_human"
+                  data-relay-thread="${escapeHtml(t.threadId)}"
+                  ${rm.mode === "human_active" ? "disabled" : ""}
+                >👤 Reprendre le relais</button>
+                <button
+                  type="button"
+                  class="btn btn-xs btn-relay-ai"
+                  data-relay-action="release_to_ai"
+                  data-relay-thread="${escapeHtml(t.threadId)}"
+                  ${rm.mode === "ai_active" ? "disabled" : ""}
+                >🤖 Perdre le relais</button>
+              </div>
+            </div>
+          `;
+        })()}
+
         <!-- Barre d'actions rapides & sélecteur complet de flags -->
         <div class="disc-manual-flags-bar">
           <button type="button" class="btn btn-outline btn-xs" data-flag-thread="${escapeHtml(t.threadId)}" data-flag-key="status" data-flag-val="${dg.isResolved ? "open" : "resolved"}">
@@ -867,33 +1021,7 @@ class AdminController {
 
       <!-- Messages de la conversation -->
       <div class="admin-disc-messages-box" id="admin-disc-scroll">
-        ${(t.messages || [])
-          .map((m) => {
-            const cls = m.sender === "admin" ? "msg-admin" : m.sender === "customer" ? "msg-customer" : "msg-system";
-            const author =
-              m.sender === "admin" ? "Vous (Admin)" : m.sender === "customer" ? t.customerName : "Système";
-            const time = new Date(m.createdAt).toLocaleString("fr-FR", {
-              hour: "2-digit",
-              minute: "2-digit",
-              day: "2-digit",
-              month: "short"
-            });
-            return `
-              <div class="chat-bubble ${cls}">
-                <div class="chat-bubble-meta">
-                  <strong>${escapeHtml(author)}</strong>
-                  <span>${time}</span>
-                </div>
-                ${m.text ? `<div class="chat-bubble-text">${escapeHtml(m.text)}</div>` : ""}
-                ${
-                  m.attachment
-                    ? `<div style="margin-top:0.35rem;font-size:0.78rem;color:var(--accent-cyan-light);">Pièce jointe envoyée : <strong>${escapeHtml(m.attachment.title || m.attachment.code)}</strong></div>`
-                    : ""
-                }
-              </div>
-            `;
-          })
-          .join("")}
+        ${(t.messages || []).map((m) => renderAdminChatBubble(m, t.customerName)).join("")}
       </div>
 
       <!-- Réponses rapides contextuelles selon les flags -->
@@ -936,6 +1064,576 @@ class AdminController {
         </div>
       </form>
     `;
+  }
+
+  // ==========================================================================
+  // ESPACE "📁 DOSSIERS" : TRAÇAGE COMPLET DES ACHATS & PERTE DE BIEN
+  // ==========================================================================
+  renderDossiersTab(d) {
+    const dossiers = d.dossiers || [];
+    const orphans = d.orphanClaims || [];
+    const s = d.stats || {};
+    const q = this.dossierSearch.trim().toLowerCase();
+
+    const matchesSearch = (dos) => {
+      if (!q) return true;
+      const hay = [
+        dos.dossierId,
+        dos.orderId,
+        dos.sepaRef,
+        dos.recoveryCode,
+        dos.proofSignature,
+        dos.recoveredContact,
+        dos.dossierNotes,
+        dos.identity?.customerName,
+        dos.identity?.email,
+        dos.identity?.canonicalEmail,
+        dos.identity?.phone,
+        dos.identity?.notes,
+        dos.payment?.transactionId,
+        dos.payment?.payerTrace?.name,
+        dos.payment?.payerTrace?.email,
+        dos.payment?.payerTrace?.phone,
+        dos.payment?.payerTrace?.senderHint,
+        dos.trace?.ipAddress,
+        dos.trace?.clientHash,
+        dos.trace?.visitorId,
+        dos.trace?.deviceFingerprint,
+        ...(dos.goods?.items || []).map((i) => i.title)
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    };
+
+    const countLost = dossiers.filter((x) => x.dossierStatus === "lost_goods" || x.linkedClaims?.length > 0).length;
+    const countInvestigating = dossiers.filter((x) => x.dossierStatus === "investigating").length;
+    const countToDeliver = dossiers.filter(
+      (x) => (x.payment?.status === "paid" || x.payment?.status === "declaration_sent") && x.goods?.deliveryStatus !== "delivered"
+    ).length;
+    const countDelivered = dossiers.filter((x) => x.goods?.deliveryStatus === "delivered").length;
+    const countRisk = dossiers.filter((x) => (x.riskScore || 0) >= 45).length;
+
+    const filtered = dossiers.filter((dos) => {
+      if (!matchesSearch(dos)) return false;
+      if (this.dossierFilter === "lost") return dos.dossierStatus === "lost_goods" || dos.linkedClaims?.length > 0;
+      if (this.dossierFilter === "investigating") return dos.dossierStatus === "investigating";
+      if (this.dossierFilter === "to_deliver") {
+        return (dos.payment?.status === "paid" || dos.payment?.status === "declaration_sent") && dos.goods?.deliveryStatus !== "delivered";
+      }
+      if (this.dossierFilter === "delivered") return dos.goods?.deliveryStatus === "delivered";
+      if (this.dossierFilter === "risk") return (dos.riskScore || 0) >= 45;
+      return true;
+    });
+
+    if (!this.selectedDossierId || !filtered.some((x) => x.orderId === this.selectedDossierId)) {
+      this.selectedDossierId = filtered[0]?.orderId || null;
+    }
+    const activeDossier = filtered.find((x) => x.orderId === this.selectedDossierId) || null;
+    const isOrphansView = this.dossierFilter === "orphans";
+
+    return `
+      <div class="admin-kpi-row four-cols">
+        <div class="kpi-box">
+          <span class="kpi-val">${dossiers.length}</span>
+          <span class="kpi-lbl">Dossiers d'achat tracés</span>
+        </div>
+        <div class="kpi-box">
+          <span class="kpi-val">${countDelivered}</span>
+          <span class="kpi-lbl">Biens livrés</span>
+        </div>
+        <div class="kpi-box ${countLost > 0 ? "danger-kpi" : ""}">
+          <span class="kpi-val">${countLost}</span>
+          <span class="kpi-lbl">Pertes / Incidents liés</span>
+        </div>
+        <div class="kpi-box ${orphans.length > 0 ? "highlight-kpi" : ""}">
+          <span class="kpi-val">${orphans.length}</span>
+          <span class="kpi-lbl">Signalements à rattacher</span>
+        </div>
+      </div>
+
+      <div class="customers-toolbar">
+        <div class="admin-filter-pills" style="margin-bottom:0;">
+          <button type="button" class="filter-pill ${this.dossierFilter === "all" ? "active" : ""}" data-dossier-filter="all">
+            Tous (${dossiers.length})
+          </button>
+          <button type="button" class="filter-pill pill-filter-fraud ${this.dossierFilter === "lost" ? "active" : ""}" data-dossier-filter="lost">
+            🆘 Pertes / Incidents (${countLost})
+          </button>
+          <button type="button" class="filter-pill ${this.dossierFilter === "investigating" ? "active" : ""}" data-dossier-filter="investigating">
+            🔎 Enquête (${countInvestigating})
+          </button>
+          <button type="button" class="filter-pill pill-filter-urgent ${this.dossierFilter === "to_deliver" ? "active" : ""}" data-dossier-filter="to_deliver">
+            📦 À livrer (${countToDeliver})
+          </button>
+          <button type="button" class="filter-pill ${this.dossierFilter === "delivered" ? "active" : ""}" data-dossier-filter="delivered">
+            ✅ Livrés (${countDelivered})
+          </button>
+          <button type="button" class="filter-pill pill-filter-fraud ${this.dossierFilter === "risk" ? "active" : ""}" data-dossier-filter="risk">
+            🚨 À risque (${countRisk})
+          </button>
+          <button type="button" class="filter-pill pill-filter-urgent ${this.dossierFilter === "orphans" ? "active" : ""}" data-dossier-filter="orphans">
+            🔗 Non rattachés (${orphans.length})
+          </button>
+        </div>
+
+        ${
+          !isOrphansView
+            ? `
+            <search>
+              <label for="admin-dossier-search" class="visually-hidden">Rechercher dans les dossiers</label>
+              <input
+                type="search"
+                id="admin-dossier-search"
+                class="form-control form-control-sm"
+                value="${escapeHtml(this.dossierSearch)}"
+                placeholder="Nom, e-mail, tél, IP, REC-..., #NX-..., titulaire..."
+              />
+            </search>
+          `
+            : ""
+        }
+      </div>
+
+      ${
+        isOrphansView
+          ? this.renderOrphanClaimsView(orphans, dossiers)
+          : filtered.length === 0
+          ? `<div class="admin-empty-state" style="margin-top:0.85rem;"><p><strong>Aucun dossier d'achat correspondant.</strong></p><p style="margin-top:0.35rem;">Chaque commande crée automatiquement un dossier forensique complet (IP, appareil, visiteur, preuves de paiement, suivi d'accès).</p></div>`
+          : `
+            <div class="admin-dossiers-split ${this.mobileDossierDetailOpen ? "mobile-detail-open" : ""}">
+              <div class="admin-dossiers-list-pane">
+                ${filtered
+                  .map((dos) => {
+                    const isSel = dos.orderId === activeDossier?.orderId;
+                    const st = DOSSIER_STATUS_META[dos.dossierStatus] || DOSSIER_STATUS_META.normal;
+                    const matchCount =
+                      (dos.crossMatches?.orders?.length || 0) +
+                      (dos.crossMatches?.users?.length || 0) +
+                      (dos.crossMatches?.discussions?.length || 0);
+                    return `
+                      <button
+                        type="button"
+                        class="dossier-list-card ${isSel ? "selected" : ""} ${dos.dossierStatus === "lost_goods" || dos.linkedClaims?.length ? "lost-border" : ""}"
+                        data-select-dossier="${escapeHtml(dos.orderId)}"
+                      >
+                        <div class="disc-card-row-top">
+                          <div>
+                            <strong>${escapeHtml(dos.dossierId)}</strong>
+                            <span class="order-date-text">(#${escapeHtml(dos.orderId)})</span>
+                          </div>
+                          <span class="dossier-status-pill ${st.cls}">${st.label}</span>
+                        </div>
+
+                        <div style="font-size:0.86rem;font-weight:700;color:#fff;">
+                          ${escapeHtml(dos.identity?.customerName || "Client")} • ${dos.payment?.total} €
+                        </div>
+                        <div class="text-subtle-sm" style="word-break:break-all;">
+                          ${escapeHtml(dos.identity?.email || "")}${dos.identity?.phone ? ` • ${escapeHtml(dos.identity.phone)}` : ""}
+                        </div>
+
+                        <div class="disc-diagnostic-badges">
+                          <span class="diag-badge ${dos.goods?.deliveryStatus === "delivered" ? "diag-resolved" : "diag-fast-help"}">
+                            ${dos.goods?.deliveryStatus === "delivered" ? "📦 Livré" : "⏳ En attente"}
+                          </span>
+                          ${dos.trace?.ipAddress ? `<span class="diag-badge diag-wait-normal">🌐 ${escapeHtml(dos.trace.ipAddress)}</span>` : ""}
+                          ${matchCount > 0 ? `<span class="diag-badge diag-order-link">🔗 ${matchCount} lien(s)</span>` : ""}
+                          ${dos.linkedClaims?.length ? `<span class="diag-badge diag-fraud">🆘 ${dos.linkedClaims.length} ticket(s)</span>` : ""}
+                        </div>
+                      </button>
+                    `;
+                  })
+                  .join("")}
+              </div>
+
+              <div class="admin-dossiers-detail-pane">
+                ${activeDossier ? this.renderSelectedDossierDetail(activeDossier, d) : ""}
+              </div>
+            </div>
+          `
+      }
+    `;
+  }
+
+  renderOrphanClaimsView(orphans, dossiers) {
+    if (!orphans.length) {
+      return `<div class="admin-empty-state" style="margin-top:0.85rem;"><p>Aucun signalement de perte orphelin : tous les dossiers sont rattachés.</p></div>`;
+    }
+    return `
+      <div class="admin-orders-list" style="margin-top:0.85rem;">
+        ${orphans
+          .map((cl) => {
+            const cands = cl.candidates || [];
+            return `
+              <div class="admin-order-card fraud-border">
+                <div class="order-card-top">
+                  <div>
+                    <span class="order-badge-id">#${escapeHtml(cl.id)}</span>
+                    <span class="order-date-text">${new Date(cl.createdAt).toLocaleString("fr-FR")}</span>
+                  </div>
+                  <span class="dossier-status-pill st-lost_goods">${cl.kind === "loss_report" ? "🔎 Perte de bien" : "🛡️ Secours"}</span>
+                </div>
+                <div class="order-client-row">
+                  <div><strong>${escapeHtml(cl.customerName)}</strong> • <code>${escapeHtml(cl.email)}</code>${cl.phone ? ` • <code>${escapeHtml(cl.phone)}</code>` : ""}</div>
+                  <div><strong>${escapeHtml(cl.amountPaid || "?")} €</strong> (${escapeHtml(cl.paymentMethod || "?")})</div>
+                </div>
+                <div class="order-items-inline">
+                  ${cl.oldEmail ? `Ancien e-mail : <code>${escapeHtml(cl.oldEmail)}</code> • ` : ""}
+                  ${cl.orderRef ? `Réf citée : <code>${escapeHtml(cl.orderRef)}</code> • ` : ""}
+                  ${cl.recoveryCode ? `Code : <code>${escapeHtml(cl.recoveryCode)}</code> • ` : ""}
+                  Preuve : <strong>${escapeHtml(cl.paymentProof || "—")}</strong>
+                  ${cl.trace?.ipAddress ? ` • IP : <code>${escapeHtml(cl.trace.ipAddress)}</code>` : ""}
+                  ${cl.trace?.deviceFingerprint ? ` • Appareil : <code>${escapeHtml(cl.trace.deviceFingerprint)}</code>` : ""}
+                </div>
+                ${cl.problemDetails ? `<div class="order-notes-box">${escapeHtml(cl.problemDetails)}</div>` : ""}
+
+                <div class="dossier-orphan-candidates">
+                  <strong style="font-size:0.78rem;">Pistes automatiques proposées :</strong>
+                  ${
+                    cands.length
+                      ? cands
+                          .map(
+                            (ca) => `
+                            <div class="dossier-cand-row">
+                              <span><strong>#${escapeHtml(ca.orderId)}</strong> (${ca.matchScore}%) — ${escapeHtml(ca.customerName)} • <code>${escapeHtml(ca.email)}</code> (${escapeHtml((ca.matchReasons || []).join(", "))})</span>
+                              <button type="button" class="btn btn-primary btn-xs" data-link-claim="${escapeHtml(cl.id)}" data-link-order="${escapeHtml(ca.orderId)}">
+                                🔗 Rattacher à #${escapeHtml(ca.orderId)}
+                              </button>
+                            </div>
+                          `
+                          )
+                          .join("")
+                      : `<div style="display:flex;gap:0.45rem;align-items:center;flex-wrap:wrap;margin-top:0.35rem;">
+                          <span class="text-subtle-sm">Aucune piste automatique :</span>
+                          ${
+                            dossiers.length
+                              ? `<select class="form-control form-control-sm" style="max-width:260px;" id="manual-link-sel-${escapeHtml(cl.id)}">
+                                  ${dossiers.slice(0, 30).map((dos) => `<option value="${escapeHtml(dos.orderId)}">#${escapeHtml(dos.orderId)} — ${escapeHtml(dos.identity?.customerName)} (${escapeHtml(dos.identity?.email)})</option>`).join("")}
+                                </select>
+                                <button type="button" class="btn btn-secondary btn-xs" data-link-claim-select="${escapeHtml(cl.id)}">🔗 Rattacher manuellement</button>`
+                              : ""
+                          }
+                        </div>`
+                  }
+                </div>
+
+                ${
+                  cl.threadId
+                    ? `<div class="order-admin-actions"><button type="button" class="btn btn-outline btn-xs" data-open-thread-from-dossier="${escapeHtml(cl.threadId)}">💬 Ouvrir la discussion #${escapeHtml(cl.threadId)}</button></div>`
+                    : ""
+                }
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  }
+
+  renderSelectedDossierDetail(dos, d) {
+    const st = DOSSIER_STATUS_META[dos.dossierStatus] || DOSSIER_STATUS_META.normal;
+    const tr = dos.trace || {};
+    const pay = dos.payment || {};
+    const payer = pay.payerTrace || {};
+    const id = dos.identity || {};
+    const creds = dos.goods?.deliveredAccess?.credentials || [];
+    const linkedThread = dos.crossMatches?.discussions?.[0];
+
+    return `
+      <div class="disc-detail-header">
+        <button type="button" class="btn btn-secondary btn-xs mobile-back-threads-btn" id="btn-admin-back-dossiers">
+          ← Liste des dossiers
+        </button>
+
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;">
+          <div>
+            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+              <h2 style="font-size:1.1rem;">📁 ${escapeHtml(dos.dossierId)} <span class="text-subtle-sm">(#${escapeHtml(dos.orderId)})</span></h2>
+              <span class="dossier-status-pill ${st.cls}">${st.label}</span>
+              ${dos.recoveryCode ? `<code title="Code de récupération client">${escapeHtml(dos.recoveryCode)}</code>` : ""}
+            </div>
+            <p class="text-subtle-sm" style="margin-top:0.25rem;">
+              Créé le ${new Date(dos.createdAt).toLocaleString("fr-FR")} • Dernière maj ${new Date(dos.updatedAt).toLocaleString("fr-FR")}
+            </p>
+          </div>
+
+          <div style="display:flex;gap:0.4rem;flex-wrap:wrap;">
+            <button type="button" class="btn btn-primary btn-xs" data-deliver-order="${escapeHtml(dos.orderId)}">
+              🚀 ${dos.goods?.deliveryStatus === "delivered" ? "Accès & Chat" : "Livrer les accès"}
+            </button>
+            ${
+              linkedThread
+                ? `<button type="button" class="btn btn-secondary btn-xs" data-open-thread-from-dossier="${escapeHtml(linkedThread.threadId)}">💬 Discussion</button>`
+                : ""
+            }
+            <button type="button" class="btn btn-outline btn-xs" id="btn-export-dossier" data-export-order="${escapeHtml(dos.orderId)}">
+              📥 Exporter Fiche (.txt)
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1. Identité & Coordonnées Acheteur -->
+      <div class="dossier-section-card">
+        <h3>👤 1. Identité &amp; Coordonnées pour Retrouver l'Acheteur</h3>
+        <div class="dossier-kv-grid">
+          <div class="dossier-kv"><span>Nom complet</span><strong>${escapeHtml(id.customerName || "—")}</strong></div>
+          <div class="dossier-kv"><span>E-mail principal</span><code>${escapeHtml(id.email || "—")}</code></div>
+          <div class="dossier-kv"><span>E-mail canonique (anti-alias)</span><code>${escapeHtml(id.canonicalEmail || "—")}</code></div>
+          <div class="dossier-kv"><span>Téléphone / WhatsApp</span><strong>${escapeHtml(id.phone || "Non renseigné")}</strong></div>
+          <div class="dossier-kv"><span>Contact retrouvé / corrigé</span><strong>${escapeHtml(dos.recoveredContact || "—")}</strong></div>
+          <div class="dossier-kv"><span>Compte client NEXUS</span><strong>${id.userId ? `✅ ${escapeHtml(id.accountName || id.userId)} (${escapeHtml(id.accountStatus || "active")})` : "👻 Commande invité"}</strong></div>
+        </div>
+        ${id.notes ? `<div class="order-notes-box" style="margin-top:0.5rem;">Note client : ${escapeHtml(id.notes)}</div>` : ""}
+      </div>
+
+      <!-- 2. Traçage Forensique Réseau, Appareil & Navigateur -->
+      <div class="dossier-section-card">
+        <h3>🌐 2. Empreinte Forensique (Réseau, Appareil &amp; Navigateur)</h3>
+        <div class="dossier-kv-grid">
+          <div class="dossier-kv"><span>Adresse IP</span><code>${escapeHtml(tr.ipAddress || "Inconnue")}</code></div>
+          <div class="dossier-kv"><span>Chaîne IP proxy</span><code>${escapeHtml((tr.forwardedIps || []).join(" → ") || "—")}</code></div>
+          <div class="dossier-kv"><span>Empreinte appareil (SHA-256)</span><code>${escapeHtml(tr.deviceFingerprint || "—")}</code></div>
+          <div class="dossier-kv"><span>ID Visiteur permanent</span><code>${escapeHtml(tr.visitorId || "—")}</code></div>
+          <div class="dossier-kv"><span>Empreinte réseau (HMAC)</span><code>${escapeHtml(tr.clientHash || "—")}</code></div>
+          <div class="dossier-kv"><span>ID Session</span><code>${escapeHtml(tr.sessionId || "—")}</code></div>
+          <div class="dossier-kv"><span>Appareil / OS / Navigateur</span><strong>${escapeHtml(tr.userAgentSummary || "—")}</strong></div>
+          <div class="dossier-kv"><span>Plateforme / CPU / RAM</span><strong>${escapeHtml([tr.platform, tr.hardwareConcurrency ? `${tr.hardwareConcurrency} cœurs` : "", tr.deviceMemory ? `${tr.deviceMemory} Go` : ""].filter(Boolean).join(" • ") || "—")}</strong></div>
+          <div class="dossier-kv"><span>Écran / Viewport / Tactile</span><strong>${escapeHtml([tr.screenSize, tr.viewportSize ? `vp ${tr.viewportSize}` : "", tr.pixelRatio ? `@${tr.pixelRatio}x` : "", typeof tr.maxTouchPoints === "number" ? `${tr.maxTouchPoints} pts` : ""].filter(Boolean).join(" • ") || "—")}</strong></div>
+          <div class="dossier-kv"><span>Fuseau horaire / Pays / Langue</span><strong>${escapeHtml([tr.timezone, tr.countryHint, tr.language].filter(Boolean).join(" • ") || "—")}</strong></div>
+          <div class="dossier-kv"><span>Temps sur site / Remplissage</span><strong>${tr.sessionDurationSec !== null ? `${tr.sessionDurationSec}s` : "—"} / ${tr.formFillMs !== null ? `${Math.round(tr.formFillMs / 1000)}s` : "—"}</strong></div>
+          <div class="dossier-kv"><span>Referrer / URL</span><span class="text-subtle-sm" style="word-break:break-all;">${escapeHtml(tr.referrer || tr.currentUrl || "Direct")}</span></div>
+        </div>
+        ${tr.userAgent ? `<div class="text-subtle-sm" style="margin-top:0.45rem;word-break:break-all;"><strong>User-Agent brut :</strong> <code>${escapeHtml(tr.userAgent)}</code></div>` : ""}
+      </div>
+
+      <!-- 3. Preuves Financières & Infos Payeur -->
+      <div class="dossier-section-card">
+        <h3>💳 3. Preuves Bancaires &amp; Informations Payeur</h3>
+        <div class="dossier-kv-grid">
+          <div class="dossier-kv"><span>Moyen / Statut</span><strong>${escapeHtml((pay.method || "").toUpperCase())} — ${escapeHtml(pay.status)}</strong></div>
+          <div class="dossier-kv"><span>Montant TTC</span><strong>${pay.total} € (Sous-total ${pay.subtotal} €${pay.coupon ? ` • Promo ${escapeHtml(pay.coupon)}` : ""})</strong></div>
+          <div class="dossier-kv"><span>Réf SEPA</span><code>${escapeHtml(dos.sepaRef || "—")}</code></div>
+          <div class="dossier-kv"><span>ID Transaction</span><code>${escapeHtml(pay.transactionId || payer.paymentIntentId || payer.captureId || "—")}</code></div>
+          <div class="dossier-kv"><span>Titulaire / Payeur détecté</span><strong>${escapeHtml(payer.name || payer.senderHint || "—")}</strong></div>
+          <div class="dossier-kv"><span>E-mail / Pays Payeur</span><code>${escapeHtml([payer.email, payer.country, payer.payerId].filter(Boolean).join(" • ") || "—")}</code></div>
+          <div class="dossier-kv"><span>Signature Certificat HMAC</span><code>${escapeHtml(dos.proofSignature || "—")}</code></div>
+          <div class="dossier-kv"><span>Code Récupération</span><code>${escapeHtml(dos.recoveryCode || "—")}</code></div>
+        </div>
+      </div>
+
+      <!-- 4. Bien Acheté & Suivi du Coffre d'Accès -->
+      <div class="dossier-section-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+          <h3 style="margin:0;">📦 4. Biens Achetés &amp; Traçage de Consultation des Accès</h3>
+          ${
+            creds.length
+              ? `<button type="button" class="btn btn-outline btn-xs" id="btn-toggle-dossier-secrets">
+                  ${this.adminRevealDossierSecrets ? "🙈 Masquer identifiants" : "👁️ Révéler identifiants livrés"}
+                </button>`
+              : ""
+          }
+        </div>
+        <div class="order-items-inline" style="margin-top:0.5rem;">
+          ${(dos.goods?.items || []).map((i) => `${i.quantity}× <strong>${escapeHtml(i.title)}</strong> (${i.lineTotal} €)`).join(" • ")}
+        </div>
+        <div class="journey-kpis-grid" style="margin-top:0.55rem;">
+          <div class="journey-kpi"><span>Ouvertures coffre</span><strong>${dos.accessMetrics?.vaultOpens || 0}</strong></div>
+          <div class="journey-kpi"><span>Révélations mdp</span><strong>${dos.accessMetrics?.secretReveals || 0}</strong></div>
+          <div class="journey-kpi"><span>Copies identifiants</span><strong>${dos.accessMetrics?.credentialCopies || 0}</strong></div>
+          <div class="journey-kpi"><span>Preuves (.txt)</span><strong>${dos.accessMetrics?.proofDownloads || 0}</strong></div>
+        </div>
+        ${
+          creds.length
+            ? `
+            <div style="margin-top:0.6rem;display:flex;flex-direction:column;gap:0.45rem;">
+              ${creds
+                .map(
+                  (c) => `
+                  <div style="padding:0.55rem 0.7rem;border-radius:var(--radius-sm);background:rgba(255,255,255,0.03);border:1px solid var(--border-light);font-size:0.8rem;">
+                    <strong>${escapeHtml(c.productTitle || "Accès")}</strong>
+                    ${c.inviteLink ? `<div>Lien : <code>${this.adminRevealDossierSecrets ? escapeHtml(c.inviteLink) : "•••••••• (masqué)"}</code></div>` : ""}
+                    ${c.login ? `<div>Login : <code>${escapeHtml(c.login)}</code></div>` : ""}
+                    ${c.password ? `<div>Mdp : <code>${this.adminRevealDossierSecrets ? escapeHtml(c.password) : "••••••••"}</code></div>` : ""}
+                    ${c.profile || c.pin ? `<div>Profil : ${escapeHtml(c.profile || "—")} • PIN : <code>${this.adminRevealDossierSecrets ? escapeHtml(c.pin || "—") : "••••"}</code></div>` : ""}
+                  </div>
+                `
+                )
+                .join("")}
+            </div>
+          `
+            : `<p class="text-subtle-sm" style="margin-top:0.5rem;">Aucun identifiant encore livré pour cette commande.</p>`
+        }
+      </div>
+
+      <!-- 5. Correspondances Automatiques (Retrouver le client) -->
+      <div class="dossier-section-card">
+        <h3>🔗 5. Correspondances Automatiques (Autres achats, comptes &amp; discussions liés)</h3>
+        ${
+          !(dos.crossMatches?.orders?.length || dos.crossMatches?.users?.length || dos.crossMatches?.discussions?.length)
+            ? `<p class="text-subtle-sm">Aucune autre entité reliée à cette empreinte pour le moment.</p>`
+            : `
+            <div class="dossier-matches-list">
+              ${(dos.crossMatches.orders || [])
+                .map(
+                  (mo) => `
+                  <button type="button" class="dossier-match-chip" data-select-dossier-jump="${escapeHtml(mo.orderId)}">
+                    <span>📦 Commande <strong>#${escapeHtml(mo.orderId)}</strong> (${escapeHtml(mo.customerName)} • ${escapeHtml(mo.email)})</span>
+                    <em>${escapeHtml((mo.reasons || []).join(", "))}</em>
+                  </button>
+                `
+                )
+                .join("")}
+              ${(dos.crossMatches.users || [])
+                .map(
+                  (mu) => `
+                  <span class="dossier-match-chip static">
+                    <span>👤 Compte <strong>${escapeHtml(mu.name)}</strong> (${escapeHtml(mu.email)})</span>
+                    <em>${escapeHtml((mu.reasons || []).join(", "))}</em>
+                  </span>
+                `
+                )
+                .join("")}
+              ${(dos.crossMatches.discussions || [])
+                .map(
+                  (md) => `
+                  <button type="button" class="dossier-match-chip" data-open-thread-from-dossier="${escapeHtml(md.threadId)}">
+                    <span>💬 Discussion <strong>#${escapeHtml(md.threadId)}</strong> (${escapeHtml(md.topicLabel)})</span>
+                    <em>${escapeHtml((md.reasons || []).join(", "))}</em>
+                  </button>
+                `
+                )
+                .join("")}
+            </div>
+          `
+        }
+      </div>
+
+      <!-- 6. Signalements de Perte / Secours Rattachés -->
+      ${
+        dos.linkedClaims?.length
+          ? `
+          <div class="dossier-section-card lost-card">
+            <h3>🆘 6. Signalements de Perte / Secours Rattachés (${dos.linkedClaims.length})</h3>
+            ${dos.linkedClaims
+              .map(
+                (lc) => `
+                <div style="padding:0.55rem 0.7rem;border-radius:var(--radius-sm);background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.3);margin-top:0.45rem;font-size:0.8rem;">
+                  <div style="display:flex;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;">
+                    <strong>#${escapeHtml(lc.id)} (${escapeHtml(lc.lossType || "secours")})</strong>
+                    <span>${new Date(lc.createdAt).toLocaleString("fr-FR")}</span>
+                  </div>
+                  <div>Contact signalé : ${escapeHtml(lc.customerName)} • <code>${escapeHtml(lc.email)}</code>${lc.oldEmail ? ` (ancien: <code>${escapeHtml(lc.oldEmail)}</code>)` : ""}${lc.phone ? ` • ${escapeHtml(lc.phone)}` : ""}</div>
+                  ${lc.paymentProof ? `<div>Preuve : <strong>${escapeHtml(lc.paymentProof)}</strong></div>` : ""}
+                  ${lc.problemDetails ? `<div style="margin-top:0.25rem;">${escapeHtml(lc.problemDetails)}</div>` : ""}
+                </div>
+              `
+              )
+              .join("")}
+          </div>
+        `
+          : ""
+      }
+
+      <!-- 7. Chronologie Complète du Dossier -->
+      <div class="dossier-section-card">
+        <h3>🕒 7. Chronologie Complète des Événements (${dos.traceTimeline?.length || 0})</h3>
+        ${
+          dos.traceTimeline?.length
+            ? `
+            <ul class="dossier-timeline-list">
+              ${dos.traceTimeline
+                .slice(0, 25)
+                .map(
+                  (ev) => `
+                  <li>
+                    <span class="tl-time">${new Date(ev.ts).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                    <code class="tl-type">${escapeHtml(ev.type)}</code>
+                    <span class="tl-label">${escapeHtml(ev.label)}${ev.detail ? ` — ${escapeHtml(ev.detail)}` : ""}</span>
+                    ${ev.ipAddress ? `<code class="tl-ip">${escapeHtml(ev.ipAddress)}</code>` : ""}
+                  </li>
+                `
+                )
+                .join("")}
+            </ul>
+          `
+            : `<p class="text-subtle-sm">Aucun événement enregistré pour cette commande.</p>`
+        }
+      </div>
+
+      <!-- 8. Suivi d'Enquête & Notes Admin -->
+      <form id="admin-dossier-update-form" class="dossier-section-card" data-dossier-order="${escapeHtml(dos.orderId)}">
+        <h3>📝 8. Suivi d'Enquête &amp; Récupération Admin</h3>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Statut du dossier</label>
+            <select name="dossierStatus" class="form-control form-control-sm">
+              <option value="normal" ${dos.dossierStatus === "normal" ? "selected" : ""}>Normal</option>
+              <option value="lost_goods" ${dos.dossierStatus === "lost_goods" ? "selected" : ""}>🆘 Bien perdu signalé</option>
+              <option value="investigating" ${dos.dossierStatus === "investigating" ? "selected" : ""}>🔎 Enquête en cours</option>
+              <option value="recovered" ${dos.dossierStatus === "recovered" ? "selected" : ""}>✅ Retrouvé &amp; rétabli</option>
+              <option value="disputed" ${dos.dossierStatus === "disputed" ? "selected" : ""}>⚠️ Litige / Contestation</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Téléphone client</label>
+            <input type="text" name="phone" class="form-control form-control-sm" value="${escapeHtml(id.phone || "")}" placeholder="+33 6..." />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Contact retrouvé / E-mail corrigé</label>
+          <input type="text" name="recoveredContact" class="form-control form-control-sm" value="${escapeHtml(dos.recoveredContact || "")}" placeholder="Ex : vrai.email@gmail.com (suite faute de frappe)" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notes d'enquête privées</label>
+          <textarea name="dossierNotes" class="form-control" rows="2" placeholder="Détails de vérification bancaire, identité payeur, accès renvoyés...">${escapeHtml(dos.dossierNotes || "")}</textarea>
+        </div>
+        <button type="submit" class="btn btn-primary btn-xs" style="align-self:flex-start;">✓ Enregistrer le dossier</button>
+      </form>
+    `;
+  }
+
+  exportDossierTxt(dos) {
+    if (!dos) return;
+    const tr = dos.trace || {};
+    const pay = dos.payment || {};
+    const payer = pay.payerTrace || {};
+    const lines = [
+      `=== FICHE DOSSIER FORENSIQUE ${dos.dossierId} (#${dos.orderId}) ===`,
+      `Statut dossier   : ${dos.dossierStatus}`,
+      `Code récupération: ${dos.recoveryCode || "N/A"}`,
+      `Signature HMAC   : ${dos.proofSignature || "N/A"}`,
+      `Date création    : ${dos.createdAt}`,
+      `--- IDENTITE ---`,
+      `Nom              : ${dos.identity?.customerName || ""}`,
+      `Email            : ${dos.identity?.email || ""} (canonique: ${dos.identity?.canonicalEmail || ""})`,
+      `Téléphone        : ${dos.identity?.phone || ""}`,
+      `Contact retrouvé : ${dos.recoveredContact || ""}`,
+      `--- TRACAGE RESEAU & APPAREIL ---`,
+      `IP               : ${tr.ipAddress || ""} (proxy: ${(tr.forwardedIps || []).join(", ")})`,
+      `Appareil FP      : ${tr.deviceFingerprint || ""}`,
+      `Visiteur ID      : ${tr.visitorId || ""}`,
+      `Client Hash      : ${tr.clientHash || ""}`,
+      `Navigateur/OS    : ${tr.userAgentSummary || ""} | ${tr.userAgent || ""}`,
+      `Ecran / Fuseau   : ${tr.screenSize || ""} | ${tr.timezone || ""} | ${tr.language || ""}`,
+      `--- PAIEMENT ---`,
+      `Mode / Statut    : ${pay.method} / ${pay.status} (${pay.total} EUR)`,
+      `Réf SEPA / TxID  : ${dos.sepaRef || ""} / ${pay.transactionId || ""}`,
+      `Payeur détecté   : ${payer.name || payer.senderHint || ""} (${payer.email || ""})`,
+      `--- CHRONOLOGIE ---`,
+      ...(dos.traceTimeline || []).map((ev) => `[${ev.ts}] ${ev.type}: ${ev.label} ${ev.detail || ""} (${ev.ipAddress || ""})`)
+    ].join("\n");
+    const blob = new Blob([lines], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Dossier-${dos.dossierId}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    showToast(`Fiche ${dos.dossierId} exportée !`, "success");
   }
 
   // ==========================================================================
@@ -1532,6 +2230,43 @@ class AdminController {
           </div>
         </div>
 
+        <div class="integration-panel highlight-integration">
+          <div class="integration-head-inline">
+            <div>
+              <span class="legal-tag">Google Gemini • Économie API</span>
+              <h2>🤖 Assistant IA Gemini — Relais Automatique (1 min)</h2>
+            </div>
+            <label class="inline-check-pill">
+              <input type="checkbox" id="cfg-ai-enabled" ${s.ai?.enabled !== false ? "checked" : ""} />
+              <span>Activer le relais IA</span>
+            </label>
+          </div>
+          <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:0.75rem;">
+            Au début d'une conversation, un message <strong>non-IA</strong> (0 crédit) avertit le client qu'un conseiller humain a été alerté. Si vous ne répondez pas sous 60 secondes, l'IA prend automatiquement le relais jusqu'à ce que vous cliquiez sur <strong>« Reprendre le relais »</strong>.
+          </p>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Clé API Gemini (chiffrée AES-256)</label>
+              <input type="password" id="cfg-ai-key" class="form-control" value="${escapeHtml(s.ai?.apiKeyPreview || "")}" placeholder="${s.ai?.hasApiKey ? "Clé enregistrée (chiffrée)" : "Collez votre clé Gemini (AQ.... ou AIza...)"}" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Modèle Gemini</label>
+              <input type="text" id="cfg-ai-model" class="form-control" value="${escapeHtml(s.ai?.model || "gemini-flash-lite-latest")}" placeholder="gemini-flash-lite-latest" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Délai avant prise de relais IA (secondes)</label>
+              <input type="number" id="cfg-ai-delay" min="5" max="600" class="form-control" value="${Number(s.ai?.delaySeconds) || 60}" />
+            </div>
+            <div class="form-group" style="display:flex;align-items:flex-end;">
+              <button type="button" class="btn btn-secondary btn-xs" id="btn-test-ai">
+                ✨ Tester la connexion Gemini maintenant
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="integration-panel">
           <div class="integration-head-inline">
             <h2>🔐 E-mails SMTP &amp; Sécurité du Compte Admin</h2>
@@ -1736,6 +2471,161 @@ class AdminController {
         }).catch(() => {});
         await this.refreshDashboardSilently();
         this.render();
+      });
+    });
+
+    // Contrôle Relais Humain ↔ IA ("Reprendre le relais" / "Perdre le relais")
+    container.querySelectorAll("[data-relay-action]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const action = btn.getAttribute("data-relay-action");
+        const tid = btn.getAttribute("data-relay-thread");
+        btn.disabled = true;
+        const resp = await fetch(`/api/admin/discussions/${encodeURIComponent(tid)}/relay`, {
+          method: "POST",
+          headers: this.authHeaders(),
+          body: JSON.stringify({ action })
+        });
+        if (resp.ok) {
+          showToast(
+            action === "take_human"
+              ? "👤 Vous avez repris le relais : l'IA est mise en pause."
+              : "🤖 Relais cédé à l'IA Gemini !",
+            "info"
+          );
+          await this.refreshDashboardSilently();
+          this.render({ preserveChatDraft: true });
+        } else {
+          btn.disabled = false;
+          showToast("Impossible de changer le relais.", "error");
+        }
+      });
+    });
+
+    // Dossiers Admin events
+    container.querySelectorAll("[data-dossier-filter]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this.dossierFilter = btn.getAttribute("data-dossier-filter");
+        this.mobileDossierDetailOpen = false;
+        this.render();
+      });
+    });
+
+    container.querySelector("#admin-dossier-search")?.addEventListener("input", (e) => {
+      this.dossierSearch = e.target.value || "";
+      this.render();
+      const inp = document.getElementById("admin-dossier-search");
+      if (inp) {
+        inp.focus();
+        inp.setSelectionRange(inp.value.length, inp.value.length);
+      }
+    });
+
+    container.querySelector("#btn-admin-back-dossiers")?.addEventListener("click", () => {
+      this.mobileDossierDetailOpen = false;
+      this.render();
+    });
+
+    container.querySelectorAll("[data-select-dossier]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this.selectedDossierId = btn.getAttribute("data-select-dossier");
+        this.mobileDossierDetailOpen = true;
+        this.adminRevealDossierSecrets = false;
+        this.render();
+      });
+    });
+
+    container.querySelectorAll("[data-select-dossier-jump]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this.dossierFilter = "all";
+        this.selectedDossierId = btn.getAttribute("data-select-dossier-jump");
+        this.mobileDossierDetailOpen = true;
+        this.render();
+      });
+    });
+
+    container.querySelectorAll("[data-open-thread-from-dossier]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const tid = btn.getAttribute("data-open-thread-from-dossier");
+        this.selectedThreadId = tid;
+        this.mobileDetailOpen = true;
+        this.activeTab = "discussions";
+        this.render();
+      });
+    });
+
+    container.querySelector("#btn-toggle-dossier-secrets")?.addEventListener("click", () => {
+      this.adminRevealDossierSecrets = !this.adminRevealDossierSecrets;
+      this.render();
+    });
+
+    container.querySelector("#btn-export-dossier")?.addEventListener("click", (e) => {
+      const oid = e.currentTarget.getAttribute("data-export-order");
+      const dos = (this.dashboard?.dossiers || []).find((x) => x.orderId === oid);
+      if (dos) this.exportDossierTxt(dos);
+    });
+
+    container.querySelector("#admin-dossier-update-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const form = e.currentTarget;
+      const oid = form.getAttribute("data-dossier-order");
+      const resp = await fetch(`/api/admin/dossiers/${encodeURIComponent(oid)}`, {
+        method: "PATCH",
+        headers: this.authHeaders(),
+        body: JSON.stringify({
+          dossierStatus: form.elements.dossierStatus.value,
+          phone: form.elements.phone.value,
+          recoveredContact: form.elements.recoveredContact.value,
+          dossierNotes: form.elements.dossierNotes.value
+        })
+      });
+      if (resp.ok) {
+        showToast("Dossier mis à jour et sauvegardé !", "success");
+        await this.refreshDashboardSilently();
+        this.render();
+      } else {
+        showToast("Erreur lors de la sauvegarde du dossier.", "error");
+      }
+    });
+
+    container.querySelectorAll("[data-link-claim]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const claimId = btn.getAttribute("data-link-claim");
+        const orderId = btn.getAttribute("data-link-order");
+        const resp = await fetch("/api/admin/dossiers/link-claim", {
+          method: "POST",
+          headers: this.authHeaders(),
+          body: JSON.stringify({ claimId, orderId })
+        });
+        if (resp.ok) {
+          showToast(`Signalement #${claimId} rattaché au dossier #${orderId} !`, "success");
+          this.dossierFilter = "all";
+          this.selectedDossierId = orderId;
+          this.mobileDossierDetailOpen = true;
+          await this.refreshDashboardSilently();
+          this.render();
+        }
+      });
+    });
+
+    container.querySelectorAll("[data-link-claim-select]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const claimId = btn.getAttribute("data-link-claim-select");
+        const sel = container.querySelector(`#manual-link-sel-${claimId}`);
+        const orderId = sel?.value;
+        if (!orderId) return;
+        const resp = await fetch("/api/admin/dossiers/link-claim", {
+          method: "POST",
+          headers: this.authHeaders(),
+          body: JSON.stringify({ claimId, orderId })
+        });
+        if (resp.ok) {
+          showToast(`Signalement #${claimId} rattaché au dossier #${orderId} !`, "success");
+          this.dossierFilter = "all";
+          this.selectedDossierId = orderId;
+          this.mobileDossierDetailOpen = true;
+          await this.refreshDashboardSilently();
+          this.render();
+        }
       });
     });
 
@@ -2066,6 +2956,31 @@ class AdminController {
       });
     });
 
+    // Test connexion IA Gemini
+    container.querySelector("#btn-test-ai")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const apiKey = container.querySelector("#cfg-ai-key")?.value || "";
+      const model = container.querySelector("#cfg-ai-model")?.value || "";
+      try {
+        const resp = await fetch("/api/admin/test-ai", {
+          method: "POST",
+          headers: this.authHeaders(),
+          body: JSON.stringify({ apiKey, model })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          showToast(`🤖 Gemini OK (${data.model} • ${data.latencyMs}ms) : ${data.text.slice(0, 90)}`, "success", 5500);
+        } else {
+          showToast(`Erreur Gemini : ${data.error || "échec"}`, "error", 5500);
+        }
+      } catch {
+        showToast("Erreur réseau lors du test Gemini.", "error");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
     // Phone Push Test & Settings
     container.querySelector("#btn-test-phone-push")?.addEventListener("click", async (e) => {
       const btn = e.currentTarget;
@@ -2129,6 +3044,12 @@ class AdminController {
             user: container.querySelector("#cfg-smtp-user").value,
             pass: container.querySelector("#cfg-smtp-pass").value
           }
+        },
+        ai: {
+          enabled: container.querySelector("#cfg-ai-enabled").checked,
+          apiKey: container.querySelector("#cfg-ai-key").value,
+          model: container.querySelector("#cfg-ai-model").value,
+          delaySeconds: Number(container.querySelector("#cfg-ai-delay").value) || 60
         },
         adminAccount: {
           email: container.querySelector("#cfg-admin-email").value,
@@ -2292,19 +3213,7 @@ class AdminController {
         <div class="deliver-chat-col">
           <h2>2. Discussion sur la commande</h2>
           <div class="live-chat-messages" id="admin-order-chat-scroll">
-            ${(order.messages || [])
-              .map(
-                (m) => `
-                <div class="chat-bubble ${m.sender === "admin" ? "msg-admin" : m.sender === "customer" ? "msg-customer" : "msg-system"}">
-                  <div class="chat-bubble-meta">
-                    <strong>${m.sender === "admin" ? "Vous (Admin)" : m.sender === "customer" ? escapeHtml(order.customerName) : "Système"}</strong>
-                    <span>${new Date(m.createdAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
-                  </div>
-                  <div class="chat-bubble-text">${escapeHtml(m.text)}</div>
-                </div>
-              `
-              )
-              .join("")}
+            ${(order.messages || []).map((m) => renderAdminChatBubble(m, order.customerName)).join("")}
           </div>
           <form id="admin-order-chat-form" class="live-chat-input-row">
             <input type="text" id="admin-order-chat-input" class="form-control" placeholder="Écrire au client..." autocomplete="off" />

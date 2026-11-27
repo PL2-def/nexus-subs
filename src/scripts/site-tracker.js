@@ -366,12 +366,37 @@ class SiteTracker {
     };
   }
 
+  getTraceMeta() {
+    let languages = [];
+    try {
+      languages = Array.isArray(navigator.languages) ? navigator.languages.slice(0, 6) : [];
+    } catch {
+      languages = [];
+    }
+    return {
+      timezone: this.metrics.timezone,
+      language: this.metrics.language,
+      languages,
+      screenSize: this.metrics.screenSize,
+      viewportSize: `${window.innerWidth || 0}x${window.innerHeight || 0}`,
+      pixelRatio: window.devicePixelRatio || 1,
+      platform: navigator.platform || "",
+      hardwareConcurrency: navigator.hardwareConcurrency || null,
+      deviceMemory: navigator.deviceMemory || null,
+      maxTouchPoints: navigator.maxTouchPoints ?? null,
+      referrer: document.referrer || "",
+      landingUrl: window.location.href.slice(0, 260),
+      currentUrl: window.location.href.slice(0, 260)
+    };
+  }
+
   getPayloadMeta() {
     return {
       visitorId: this.visitorId,
       sessionId: this.sessionId,
       deviceFingerprint: this.deviceFingerprint,
-      telemetrySnapshot: this.getSnapshot()
+      telemetrySnapshot: this.getSnapshot(),
+      traceMeta: this.getTraceMeta()
     };
   }
 

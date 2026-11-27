@@ -121,7 +121,14 @@ export async function verifyStripeSession(sessionId) {
   const session = await stripe.checkout.sessions.retrieve(sessionId);
   return {
     verified: session.payment_status === "paid",
-    session
+    session,
+    payerDetails: {
+      email: session.customer_details?.email || "",
+      name: session.customer_details?.name || "",
+      phone: session.customer_details?.phone || "",
+      country: session.customer_details?.address?.country || "",
+      paymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id || ""
+    }
   };
 }
 
@@ -246,5 +253,15 @@ export async function capturePayPalOrder(paypalOrderId) {
 
   const data = await resp.json();
   const completed = resp.ok && data.status === "COMPLETED";
-  return { completed, data };
+  return {
+    completed,
+    data,
+    payerDetails: {
+      email: data.payer?.email_address || "",
+      payerId: data.payer?.payer_id || "",
+      name: [data.payer?.name?.given_name, data.payer?.name?.surname].filter(Boolean).join(" ").trim(),
+      country: data.payer?.address?.country_code || "",
+      captureId: data.purchase_units?.[0]?.payments?.captures?.[0]?.id || ""
+    }
+  };
 }

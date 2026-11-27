@@ -52,6 +52,20 @@ import {
   createPayPalOrderForOrder,
   capturePayPalOrder
 } from "./payments.js";
+import {
+  extractRequestTrace,
+  generateDossierIdentifiers,
+  appendOrderTraceEvent,
+  findCandidateOrdersForLostBuyer,
+  buildOrderDossier
+} from "./dossier-tracer.js";
+import {
+  initAiAssistant,
+  onCustomerMessageInThread,
+  setThreadRelayMode,
+  sanitizeAiControlForCustomer,
+  testGeminiConnection
+} from "./ai-assistant.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.resolve(__dirname, "..", "dist");
@@ -191,7 +205,22 @@ function getPublicPaymentConfig() {
 
 function sanitizeOrderForCustomer(order) {
   if (!order) return null;
-  const { accessToken, clientHash, deviceFingerprint, visitorId, riskScore, fraudReasons, fraudAssessment, ...safe } = order;
+  const {
+    accessToken,
+    clientHash,
+    deviceFingerprint,
+    visitorId,
+    riskScore,
+    fraudReasons,
+    fraudAssessment,
+    trace,
+    traceTimeline,
+    paymentTrace,
+    dossierNotes,
+    recoveredContact,
+    linkedClaimIds,
+    ...safe
+  } = order;
   return safe;
 }
 
@@ -207,9 +236,13 @@ function sanitizeThreadForCustomer(thread) {
     manualFlags,
     adminNotes,
     unreadByAdmin,
+    aiControl,
     ...safe
   } = thread;
-  return safe;
+  return {
+    ...safe,
+    aiControl: sanitizeAiControlForCustomer(aiControl)
+  };
 }
 
 function getDiagnosticContext() {
@@ -372,8 +405,10 @@ function validateCustomerFullName(raw) {
 function syncOrderMessageToDiscussion(order, sender, text) {
   let thread = db.data.discussions.find((t) => t.orderId === order.orderId);
   const nowIso = new Date().toISOString();
+  let isNewThread = false;
 
   if (!thread) {
+    isNewThread = true;
     thread = {
       threadId: `DSC-${order.orderId.replace(/^NX-/, "")}`,
       threadToken: crypto.randomBytes(18).toString("hex"),
@@ -408,6 +443,9 @@ function syncOrderMessageToDiscussion(order, sender, text) {
     };
     db.data.discussions.unshift(thread);
   } else {
+    if (sender === "admin") {
+      setThreadRelayMode(thread, "take_human", { triggeredByMessage: true });
+    }
     thread.messages.push({
       id: `dmsg_${Date.now()}_${crypto.randomBytes(2).toString("hex")}`,
       sender,
@@ -421,6 +459,9 @@ function syncOrderMessageToDiscussion(order, sender, text) {
     } else if (sender === "admin") {
       thread.unreadByCustomer = (thread.unreadByCustomer || 0) + 1;
     }
+  }
+  if (sender === "customer") {
+    onCustomerMessageInThread(thread, { isNewThread });
   }
   db.save();
   broadcastDiscussion(thread.threadId, "new_message", thread);
@@ -478,12 +519,31 @@ function validateCouponInternal(rawCode, subtotal) {
   };
 }
 
-async function markOrderPaid(order, { transactionId = "", sourceLabel = "", originUrl = "" } = {}) {
+async function markOrderPaid(order, { transactionId = "", sourceLabel = "", originUrl = "", payerDetails = null, req = null } = {}) {
   const alreadyPaid = order.paymentStatus === "paid";
   order.paymentStatus = "paid";
   order.paidAt = order.paidAt || new Date().toISOString();
   if (transactionId) order.paymentTransactionId = transactionId;
   order.updatedAt = new Date().toISOString();
+
+  if (payerDetails && typeof payerDetails === "object") {
+    order.paymentTrace = {
+      ...(order.paymentTrace || {}),
+      ...Object.fromEntries(Object.entries(payerDetails).filter(([, v]) => Boolean(v)))
+    };
+    if (!order.phone && payerDetails.phone) {
+      order.phone = String(payerDetails.phone).slice(0, 40);
+    }
+  }
+
+  appendOrderTraceEvent(order, {
+    type: "payment_confirmed",
+    label: `Paiement confirmé (${sourceLabel || order.paymentMethod})`,
+    detail: transactionId ? `Transaction : ${transactionId}` : "",
+    actor: req ? "customer" : "system",
+    req,
+    meta: { sourceLabel, transactionId, payerEmail: payerDetails?.email || "" }
+  });
 
   appendRescueLedger("payment_confirmed", {
     orderId: order.orderId,
@@ -558,7 +618,14 @@ app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), asyn
       if (order) {
         await markOrderPaid(order, {
           transactionId: session.id,
-          sourceLabel: "Stripe Checkout"
+          sourceLabel: "Stripe Checkout",
+          payerDetails: {
+            email: session.customer_details?.email || "",
+            name: session.customer_details?.name || "",
+            phone: session.customer_details?.phone || "",
+            country: session.customer_details?.address?.country || "",
+            paymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id || ""
+          }
         });
       }
     }
@@ -1218,6 +1285,8 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
       couponCode,
       customerName,
       email,
+      phone = "",
+      alternateContact = "",
       notes = "",
       paymentMethod,
       honeypot = "",
@@ -1341,6 +1410,8 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
     const accessToken = crypto.randomBytes(18).toString("hex");
     const createdAt = new Date().toISOString();
     const originUrl = getOrigin(req);
+    const { dossierId, recoveryCode } = generateDossierIdentifiers(orderId);
+    const trace = extractRequestTrace(req, req.body);
 
     let sepaQr = null;
     if (paymentMethod === "sepa_instant") {
@@ -1349,6 +1420,8 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
 
     const order = {
       orderId,
+      dossierId,
+      recoveryCode,
       sepaRef,
       accessToken,
       userId: auth?.user?.id || null,
@@ -1362,7 +1435,23 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
       updatedAt: createdAt,
       customerName: cleanName,
       email: cleanEmail,
+      phone: String(phone || "").trim().slice(0, 40),
+      alternateContact: String(alternateContact || "").trim().slice(0, 120),
       notes: String(notes || "").trim().slice(0, 500),
+      trace,
+      paymentTrace: {},
+      accessMetrics: {
+        vaultOpens: 0,
+        secretReveals: 0,
+        credentialCopies: 0,
+        proofDownloads: 0,
+        lastAccessedAt: null
+      },
+      dossierStatus: "normal",
+      dossierNotes: "",
+      recoveredContact: "",
+      linkedClaimIds: [],
+      traceTimeline: [],
       items: resolvedItems,
       subtotal,
       discount,
@@ -1390,12 +1479,21 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
           sender: "system",
           text:
             paymentMethod === "sepa_instant"
-              ? `Commande #${orderId} enregistrée avec suivi sécurisé. Scannez le QR Code SEPA ou copiez l'IBAN avec la référence ${sepaRef}, puis cliquez sur « J'ai effectué le virement ».`
-              : `Commande #${orderId} enregistrée avec suivi sécurisé. Finalisez le paiement sécurisé pour recevoir vos accès ici-même et par e-mail.`,
+              ? `Commande #${orderId} (Dossier ${dossierId}) enregistrée avec suivi sécurisé. Scannez le QR Code SEPA ou copiez l'IBAN avec la référence ${sepaRef}, puis cliquez sur « J'ai effectué le virement ».`
+              : `Commande #${orderId} (Dossier ${dossierId}) enregistrée avec suivi sécurisé. Finalisez le paiement sécurisé pour recevoir vos accès ici-même et par e-mail.`,
           createdAt
         }
       ]
     };
+
+    appendOrderTraceEvent(order, {
+      type: "order_created",
+      label: `Dossier d'achat créé (${paymentMethod.toUpperCase()} • ${total} €)`,
+      detail: `${resolvedItems.map((i) => `${i.quantity}x ${i.title}`).join(", ")}${order.phone ? ` • Tél: ${order.phone}` : ""}`,
+      actor: "customer",
+      req,
+      meta: { dossierId, recoveryCode }
+    });
 
     order.proofSignature = signOrderRescueProof(order);
 
@@ -1492,13 +1590,16 @@ app.post("/api/orders/:orderId/confirm-gateway", async (req, res) => {
         await markOrderPaid(order, {
           transactionId: sessionId,
           sourceLabel: "Carte Bancaire / Stripe",
-          originUrl
+          originUrl,
+          payerDetails: check.payerDetails,
+          req
         });
       } else if (!secretKey && sandboxConfirm) {
         await markOrderPaid(order, {
           transactionId: `sandbox_stripe_${Date.now()}`,
           sourceLabel: "Stripe (Mode Test Sandbox)",
-          originUrl
+          originUrl,
+          req
         });
       } else {
         return res.status(400).json({ error: "Session Stripe manquante." });
@@ -1514,13 +1615,16 @@ app.post("/api/orders/:orderId/confirm-gateway", async (req, res) => {
         await markOrderPaid(order, {
           transactionId: paypalOrderId || order.paymentTransactionId,
           sourceLabel: "PayPal Checkout",
-          originUrl
+          originUrl,
+          payerDetails: cap.payerDetails,
+          req
         });
       } else if (!hasApiKeys && sandboxConfirm) {
         await markOrderPaid(order, {
           transactionId: `sandbox_paypal_${Date.now()}`,
           sourceLabel: "PayPal (Mode Test Sandbox)",
-          originUrl
+          originUrl,
+          req
         });
       } else {
         return res.status(400).json({ error: "Identifiant PayPal manquant." });
@@ -1562,10 +1666,21 @@ app.post("/api/orders/:orderId/declare-payment", async (req, res) => {
       order.paymentStatus = "declaration_sent";
       order.declaredAt = new Date().toISOString();
       order.updatedAt = new Date().toISOString();
+      if (senderHint) {
+        order.paymentTrace = { ...(order.paymentTrace || {}), senderHint: String(senderHint).trim().slice(0, 120) };
+      }
       const methodLabel =
         order.paymentMethod === "sepa_instant"
           ? `Virement SEPA Instantané (Réf: ${order.sepaRef})`
           : "PayPal";
+
+      appendOrderTraceEvent(order, {
+        type: "payment_declared",
+        label: `Paiement déclaré (${methodLabel})`,
+        detail: senderHint ? `Titulaire / Indice : ${senderHint}` : "",
+        actor: "customer",
+        req
+      });
 
       order.messages.push({
         id: `msg_${Date.now()}`,
@@ -1613,20 +1728,28 @@ app.post("/api/orders/:orderId/declare-payment", async (req, res) => {
 });
 
 app.post("/api/orders/lookup", lookupLimiter, (req, res) => {
-  const { orderId, email, visitorId = "", deviceFingerprint = "" } = req.body || {};
+  const { orderId, email, recoveryCode = "", visitorId = "", deviceFingerprint = "" } = req.body || {};
   const rawId = String(orderId || "")
     .trim()
     .toUpperCase()
     .replace(/^#/, "")
-    .replace(/^NEXUS-/, "NX-");
+    .replace(/^NEXUS-/, "NX-")
+    .replace(/^DOS-/, "NX-");
   const normalizedNum = rawId.replace(/^NX-/, "");
   const cleanEmail = canonicalizeEmail(email);
+  const cleanRec = String(recoveryCode || (rawId.startsWith("REC-") ? rawId : "")).trim().toUpperCase();
 
-  const order = db.data.orders.find(
-    (o) =>
-      (o.orderId.toUpperCase() === rawId || (normalizedNum.length >= 5 && o.orderId.endsWith(normalizedNum))) &&
-      canonicalizeEmail(o.email) === cleanEmail
-  );
+  let order = null;
+  if (cleanRec) {
+    order = db.data.orders.find((o) => o.recoveryCode && o.recoveryCode.toUpperCase() === cleanRec);
+  }
+  if (!order && rawId && cleanEmail) {
+    order = db.data.orders.find(
+      (o) =>
+        (o.orderId.toUpperCase() === rawId || (normalizedNum.length >= 5 && o.orderId.endsWith(normalizedNum))) &&
+        canonicalizeEmail(o.email) === cleanEmail
+    );
+  }
 
   const auth = getAuthenticatedCustomer(req);
   ingestVisitorTelemetry(db, {
@@ -1635,21 +1758,316 @@ app.post("/api/orders/lookup", lookupLimiter, (req, res) => {
     deviceFingerprint,
     userId: auth?.user?.id || null,
     email: cleanEmail || auth?.user?.email || "",
-    events: [{ type: "order_lookup_attempt", label: `Recherche commande ${rawId || "?"}`, ok: Boolean(order) }],
+    events: [{ type: "order_lookup_attempt", label: `Recherche commande ${cleanRec || rawId || "?"}`, ok: Boolean(order) }],
     userAgentSummary: summarizeUserAgent(req.headers["user-agent"] || "")
   });
 
   if (!order) {
     db.save();
     return res.status(404).json({
-      error: "Aucune commande trouvée avec ce numéro et cet e-mail. Si vous avez fait une erreur d'adresse e-mail en commandant, utilisez le bouton « Secours Paiement / Bug » !"
+      error: "Aucune commande trouvée avec ces informations. Si vous avez perdu votre bien ou fait une faute de frappe dans votre e-mail, utilisez « Retrouver mon bien / Secours » !"
     });
   }
+
+  appendOrderTraceEvent(order, {
+    type: "order_lookup",
+    label: cleanRec ? `Commande retrouvée par code de récupération (${cleanRec})` : "Commande consultée via Mes Accès",
+    detail: cleanEmail ? `E-mail saisi : ${cleanEmail}` : "",
+    actor: "customer",
+    req
+  });
+  db.save();
+  broadcastAdmin("order_updated", { order: enrichOrderForAdmin(order) });
 
   res.json({
     order: sanitizeOrderForCustomer(order),
     accessToken: order.accessToken
   });
+});
+
+// Traçage des ouvertures de coffre / révélations / copies / téléchargements de preuve
+app.post("/api/orders/:orderId/trace-event", chatLimiter, (req, res) => {
+  const { orderId } = req.params;
+  const { token = "", eventType = "", detail = "" } = req.body || {};
+  const auth = getAuthenticatedCustomer(req);
+  const order = db.data.orders.find((o) => o.orderId === orderId);
+  const isOwner = Boolean(
+    order &&
+      ((token && order.accessToken === token) ||
+        (auth?.user && (order.userId === auth.user.id || canonicalizeEmail(order.email) === canonicalizeEmail(auth.user.email))))
+  );
+  if (!order || !isOwner) return res.status(403).json({ error: "Non autorisé." });
+
+  const labels = {
+    vault_opened: "Coffre d'accès ouvert par le client",
+    secret_revealed: "Mot de passe / PIN révélé à l'écran",
+    credential_copied: "Identifiant ou lien copié dans le presse-papiers",
+    proof_downloaded: "Certificat de preuve d'achat (.txt) téléchargé"
+  };
+  if (!labels[eventType]) return res.status(400).json({ error: "Événement inconnu." });
+
+  order.accessMetrics = order.accessMetrics || {
+    vaultOpens: 0,
+    secretReveals: 0,
+    credentialCopies: 0,
+    proofDownloads: 0,
+    lastAccessedAt: null
+  };
+  if (eventType === "vault_opened") order.accessMetrics.vaultOpens += 1;
+  if (eventType === "secret_revealed") order.accessMetrics.secretReveals += 1;
+  if (eventType === "credential_copied") order.accessMetrics.credentialCopies += 1;
+  if (eventType === "proof_downloaded") order.accessMetrics.proofDownloads += 1;
+  order.accessMetrics.lastAccessedAt = new Date().toISOString();
+
+  appendOrderTraceEvent(order, {
+    type: eventType,
+    label: labels[eventType],
+    detail: String(detail || "").slice(0, 120),
+    actor: "customer",
+    req
+  });
+  db.save();
+  broadcastAdmin("order_updated", { order: enrichOrderForAdmin(order) });
+  res.json({ ok: true });
+});
+
+// Signalement & Traçage Automatique pour utilisateur ayant perdu son bien / accès / e-mail
+app.post("/api/orders/trace-recovery", orderLimiter, async (req, res) => {
+  try {
+    const {
+      lossType = "lost_access",
+      customerName = "",
+      email = "",
+      oldEmail = "",
+      phone = "",
+      orderRef = "",
+      recoveryCode = "",
+      paymentMethod = "",
+      amountPaid = "",
+      paymentProof = "",
+      problemDetails = "",
+      visitorId = "",
+      deviceFingerprint = "",
+      telemetrySnapshot = null
+    } = req.body || {};
+
+    const auth = getAuthenticatedCustomer(req);
+    const cleanName = String(customerName || auth?.user?.name || "").trim() || "Client";
+    const cleanEmail = canonicalizeEmail(email || auth?.user?.email || "");
+    const cleanOldEmail = canonicalizeEmail(oldEmail || "");
+    const cleanPhone = String(phone || "").trim().slice(0, 40);
+    const cleanRec = String(recoveryCode || "").trim().toUpperCase();
+    const cleanOrderRef = String(orderRef || "").trim();
+
+    // 1. Récupération immédiate en libre-service si code de récupération exact ou (n° + e-mail exact)
+    let directOrder = null;
+    if (cleanRec) {
+      directOrder = db.data.orders.find((o) => o.recoveryCode && o.recoveryCode.toUpperCase() === cleanRec);
+    }
+    if (!directOrder && cleanOrderRef && cleanEmail) {
+      const normRef = cleanOrderRef.toUpperCase().replace(/^#/, "").replace(/^NEXUS-/, "NX-").replace(/^DOS-/, "NX-");
+      const normNum = normRef.replace(/^NX-/, "");
+      directOrder = db.data.orders.find(
+        (o) =>
+          (o.orderId.toUpperCase() === normRef || (normNum.length >= 5 && o.orderId.endsWith(normNum))) &&
+          canonicalizeEmail(o.email) === cleanEmail
+      );
+    }
+
+    if (directOrder) {
+      appendOrderTraceEvent(directOrder, {
+        type: "order_recovered_self",
+        label: "Bien retrouvé automatiquement par le client",
+        detail: cleanRec ? `Code ${cleanRec}` : `Réf ${cleanOrderRef}`,
+        actor: "customer",
+        req
+      });
+      if (cleanPhone && !directOrder.phone) directOrder.phone = cleanPhone;
+      db.save();
+      broadcastAdmin("order_updated", { order: enrichOrderForAdmin(directOrder) });
+      return res.json({
+        recovered: true,
+        order: sanitizeOrderForCustomer(directOrder),
+        accessToken: directOrder.accessToken
+      });
+    }
+
+    if (!cleanEmail && !cleanPhone && !cleanOrderRef && !paymentProof && !problemDetails) {
+      return res.status(400).json({
+        error: "Veuillez renseigner au moins votre e-mail, téléphone ou un détail pour retrouver votre achat."
+      });
+    }
+
+    const trace = extractRequestTrace(req, req.body);
+    const clientHash = trace.clientHash || getPrivacyClientHash(req);
+
+    ingestVisitorTelemetry(db, {
+      visitorId,
+      clientHash,
+      deviceFingerprint,
+      userId: auth?.user?.id || null,
+      email: cleanEmail,
+      events: [{ type: "rescue_submit", label: `Perte de bien (${lossType})`, ok: true }],
+      snapshot: telemetrySnapshot,
+      userAgentSummary: trace.userAgentSummary
+    });
+
+    const candidates = findCandidateOrdersForLostBuyer(
+      {
+        orderRef: cleanOrderRef,
+        recoveryCode: cleanRec,
+        email: cleanEmail,
+        oldEmail: cleanOldEmail,
+        phone: cleanPhone,
+        customerName: cleanName,
+        payerName: paymentProof,
+        paymentProof,
+        amountPaid,
+        ipAddress: trace.ipAddress,
+        clientHash,
+        visitorId: trace.visitorId,
+        deviceFingerprint: trace.deviceFingerprint
+      },
+      db
+    );
+
+    const nowIso = new Date().toISOString();
+    const reportId = `LOSS-${Math.floor(100000 + Math.random() * 900000)}`;
+    const threadId = `DSC-${reportId.replace("LOSS-", "")}`;
+
+    const report = {
+      reportId,
+      createdAt: nowIso,
+      lossType: String(lossType || "lost_access"),
+      userId: auth?.user?.id || null,
+      customerName: cleanName,
+      email: cleanEmail,
+      oldEmail: cleanOldEmail,
+      phone: cleanPhone,
+      orderRef: cleanOrderRef,
+      recoveryCode: cleanRec,
+      paymentMethod: String(paymentMethod || "").trim(),
+      amountPaid: String(amountPaid || "").trim(),
+      paymentProof: String(paymentProof || "").trim(),
+      problemDetails: String(problemDetails || "").trim(),
+      trace,
+      candidateOrderIds: candidates.filter((c) => c.matchScore >= 40).map((c) => c.orderId),
+      candidates,
+      threadId
+    };
+
+    db.data.lossReports = db.data.lossReports || [];
+    db.data.lossReports.unshift(report);
+    db.data.lossReports = db.data.lossReports.slice(0, 300);
+
+    // Rattacher automatiquement aux dossiers candidats solides (score >= 45)
+    for (const cand of candidates.filter((c) => c.matchScore >= 45)) {
+      const ord = db.data.orders.find((o) => o.orderId === cand.orderId);
+      if (ord) {
+        ord.linkedClaimIds = Array.isArray(ord.linkedClaimIds) ? ord.linkedClaimIds : [];
+        if (!ord.linkedClaimIds.includes(reportId)) ord.linkedClaimIds.push(reportId);
+        if (!ord.dossierStatus || ord.dossierStatus === "normal") ord.dossierStatus = "lost_goods";
+        if (cleanEmail && cleanEmail !== canonicalizeEmail(ord.email) && !ord.recoveredContact) {
+          ord.recoveredContact = cleanEmail;
+        }
+        if (cleanPhone && !ord.phone) ord.phone = cleanPhone;
+        appendOrderTraceEvent(ord, {
+          type: "loss_report_submitted",
+          label: `Signalement de perte de bien #${reportId} rattaché (Score ${cand.matchScore}%)`,
+          detail: `${cand.matchReasons.join(", ")}${problemDetails ? ` — ${problemDetails}` : ""}`,
+          actor: "customer",
+          req,
+          meta: { reportId, matchScore: cand.matchScore }
+        });
+      }
+    }
+
+    const summaryMsg = [
+      `🔎 DOSSIER PERTE DE BIEN / RÉCUPÉRATION (${reportId})`,
+      `• Motif : ${lossType}`,
+      cleanOrderRef ? `• Réf / N° commande : ${cleanOrderRef}` : null,
+      cleanRec ? `• Code récupération : ${cleanRec}` : null,
+      cleanOldEmail ? `• Ancien e-mail : ${cleanOldEmail}` : null,
+      cleanPhone ? `• Téléphone / Contact : ${cleanPhone}` : null,
+      amountPaid ? `• Montant : ${amountPaid} (${paymentMethod || "?"})` : null,
+      paymentProof ? `• Preuve / Titulaire : ${paymentProof}` : null,
+      problemDetails ? `• Détails : ${problemDetails}` : null,
+      candidates.length
+        ? `• Pistes automatiques trouvées : ${candidates.slice(0, 2).map((c) => `#${c.orderId} (${c.matchScore}%)`).join(", ")}`
+        : null
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const thread = {
+      threadId,
+      threadToken: crypto.randomBytes(18).toString("hex"),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      topicType: "rescue",
+      topicLabel: `🔎 Perte de bien / Récupération (${reportId})`,
+      productId: null,
+      productTitle: null,
+      orderId: candidates[0]?.matchScore >= 60 ? candidates[0].orderId : cleanOrderRef || null,
+      userId: auth?.user?.id || null,
+      visitorId: trace.visitorId,
+      deviceFingerprint: trace.deviceFingerprint,
+      customerName: cleanName,
+      customerEmail: cleanEmail || cleanOldEmail,
+      clientHash,
+      status: "open",
+      riskScore: 0,
+      fraudReasons: [],
+      manualFlags: { fast_help: true, rescue_sos: true },
+      adminNotes: candidates.length
+        ? `Pistes auto : ${candidates.map((c) => `#${c.orderId} (${c.matchScore}%: ${c.matchReasons.join("+")})`).join(" | ")}`
+        : "",
+      unreadByAdmin: 1,
+      unreadByCustomer: 0,
+      messages: [
+        {
+          id: `dmsg_loss_u_${Date.now()}`,
+          sender: "customer",
+          text: summaryMsg,
+          createdAt: nowIso
+        }
+      ]
+    };
+
+    onCustomerMessageInThread(thread, { isNewThread: true });
+    db.data.discussions.unshift(thread);
+    db.save();
+
+    const diag = computeDiscussionDiagnostics(thread, db.data.orders, getDiagnosticContext());
+    const notif = db.addNotification({
+      type: "rescue",
+      title: `🔎 PERTE DE BIEN #${reportId} — ${cleanName}`,
+      message: `${candidates.length ? `${candidates.length} dossier(s) candidat(s) trouvé(s) ! ` : ""}${cleanEmail || cleanPhone}`,
+      threadId: thread.threadId
+    });
+    broadcastAdmin("discussion_updated", {
+      thread: { ...thread, diagnostics: diag },
+      notification: notif
+    });
+
+    await sendMobilePushNotification({
+      title: `🔎 PERTE DE BIEN #${reportId} — ${cleanName}`,
+      message: `${candidates.length ? `Pistes: ${candidates.slice(0, 2).map((c) => `#${c.orderId} (${c.matchScore}%)`).join(", ")}\n` : ""}${problemDetails.slice(0, 180)}`,
+      priority: "urgent",
+      tags: "mag,rotating_light",
+      clickUrl: `${getOrigin(req)}/?adminThread=${encodeURIComponent(thread.threadId)}#admin`
+    });
+
+    res.status(201).json({
+      recovered: false,
+      reportId,
+      matchedCount: candidates.length,
+      thread: sanitizeThreadForCustomer(thread),
+      threadToken: thread.threadToken
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get("/api/orders/:orderId", (req, res) => {
@@ -1831,10 +2249,11 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
       const found = db.data.discussions.find((t) => t.threadId === existingThreadId && t.threadToken === existingToken);
       if (found) thread = found;
     }
+    const isNewThread = !thread;
 
     const nowIso = new Date().toISOString();
 
-    if (!thread) {
+    if (isNewThread) {
       const num = String(Math.floor(100000 + Math.random() * 900000));
       thread = {
         threadId: `DSC-${num}`,
@@ -1861,12 +2280,6 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
         unreadByCustomer: 0,
         messages: [
           {
-            id: `dmsg_welcome_${Date.now()}`,
-            sender: "system",
-            text: `Discussion ouverte concernant : ${topicLabel}. Notre équipe vient de recevoir une notification sur mobile et vous répond ici-même en direct !`,
-            createdAt: nowIso
-          },
-          {
             id: `dmsg_${Date.now()}_c`,
             sender: "customer",
             text: cleanMsg,
@@ -1875,6 +2288,7 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
           }
         ]
       };
+      onCustomerMessageInThread(thread, { isNewThread: true });
       db.data.discussions.unshift(thread);
       db.data.discussions = db.data.discussions.slice(0, 300);
     } else {
@@ -1897,6 +2311,7 @@ app.post("/api/discussions", chatLimiter, async (req, res) => {
         topicContext: topicLabel,
         createdAt: nowIso
       });
+      onCustomerMessageInThread(thread, { isNewThread: false });
     }
 
     db.save();
@@ -1984,22 +2399,58 @@ app.post("/api/rescue-claim", orderLimiter, async (req, res) => {
 
     const nowIso = new Date().toISOString();
     const rescueId = `SOS-${Math.floor(100000 + Math.random() * 900000)}`;
+    const trace = extractRequestTrace(req, req.body);
+    const candidates = findCandidateOrdersForLostBuyer(
+      {
+        orderRef,
+        email: cleanEmail,
+        phone: req.body?.phone || "",
+        customerName: cleanName,
+        payerName: paymentProof,
+        paymentProof,
+        amountPaid,
+        ipAddress: trace.ipAddress,
+        clientHash,
+        visitorId: trace.visitorId,
+        deviceFingerprint: trace.deviceFingerprint
+      },
+      db
+    );
     const claim = {
       rescueId,
       createdAt: nowIso,
       userId: auth?.user?.id || null,
       customerName: cleanName,
       email: cleanEmail,
+      phone: String(req.body?.phone || "").trim().slice(0, 40),
       orderRef: String(orderRef || "").trim(),
       paymentMethod: String(paymentMethod || "").trim(),
       amountPaid: String(amountPaid || "").trim(),
       paymentProof: String(paymentProof || "").trim(),
-      problemDetails: String(problemDetails || "").trim()
+      problemDetails: String(problemDetails || "").trim(),
+      trace,
+      candidateOrderIds: candidates.filter((c) => c.matchScore >= 40).map((c) => c.orderId),
+      candidates
     };
 
     // Écriture immuable immédiate sur le disque de secours
     appendRescueLedger("rescue_claim_submitted", claim);
     db.data.rescueClaims.unshift(claim);
+    for (const cand of candidates.filter((c) => c.matchScore >= 45)) {
+      const ord = db.data.orders.find((o) => o.orderId === cand.orderId);
+      if (ord) {
+        ord.linkedClaimIds = Array.isArray(ord.linkedClaimIds) ? ord.linkedClaimIds : [];
+        if (!ord.linkedClaimIds.includes(rescueId)) ord.linkedClaimIds.push(rescueId);
+        if (!ord.dossierStatus || ord.dossierStatus === "normal") ord.dossierStatus = "lost_goods";
+        appendOrderTraceEvent(ord, {
+          type: "loss_report_submitted",
+          label: `Ticket secours #${rescueId} rattaché (${cand.matchScore}%)`,
+          detail: problemDetails.slice(0, 140),
+          actor: "customer",
+          req
+        });
+      }
+    }
     db.save();
 
     const summaryMsg = [
@@ -2021,7 +2472,7 @@ app.post("/api/rescue-claim", orderLimiter, async (req, res) => {
       topicLabel: `🛡️ Secours Paiement (${claim.amountPaid || "?"} €)`,
       productId: null,
       productTitle: null,
-      orderId: claim.orderRef || null,
+      orderId: claim.orderRef || candidates[0]?.orderId || null,
       userId: auth?.user?.id || null,
       visitorId: String(visitorId || "").slice(0, 64),
       deviceFingerprint: String(deviceFingerprint || "").slice(0, 64),
@@ -2032,16 +2483,12 @@ app.post("/api/rescue-claim", orderLimiter, async (req, res) => {
       riskScore: 0,
       fraudReasons: [],
       manualFlags: { fast_help: true, rescue_sos: true },
-      adminNotes: "",
+      adminNotes: candidates.length
+        ? `Pistes auto : ${candidates.map((c) => `#${c.orderId} (${c.matchScore}%)`).join(", ")}`
+        : "",
       unreadByAdmin: 1,
       unreadByCustomer: 0,
       messages: [
-        {
-          id: `dmsg_sos_sys_${Date.now()}`,
-          sender: "system",
-          text: `Votre dossier d'assistance prioritaire #${rescueId} est enregistré de façon permanente. Un administrateur vient d'être alerté en urgence sur son téléphone : votre dossier est pris en charge en priorité pour la livraison de vos accès.`,
-          createdAt: nowIso
-        },
         {
           id: `dmsg_sos_usr_${Date.now()}`,
           sender: "customer",
@@ -2051,6 +2498,8 @@ app.post("/api/rescue-claim", orderLimiter, async (req, res) => {
       ]
     };
 
+    claim.threadId = thread.threadId;
+    onCustomerMessageInThread(thread, { isNewThread: true });
     db.data.discussions.unshift(thread);
     db.save();
 
@@ -2234,6 +2683,9 @@ app.post("/api/discussions/:threadId/messages", chatLimiter, async (req, res) =>
   }
 
   const nowIso = new Date().toISOString();
+  if (isAdmin) {
+    setThreadRelayMode(thread, "take_human", { triggeredByMessage: true });
+  }
   const msg = {
     id: `dmsg_${Date.now()}_${crypto.randomBytes(2).toString("hex")}`,
     sender: isAdmin ? "admin" : "customer",
@@ -2264,6 +2716,7 @@ app.post("/api/discussions/:threadId/messages", chatLimiter, async (req, res) =>
   } else {
     thread.status = "open";
     thread.unreadByAdmin = (thread.unreadByAdmin || 0) + 1;
+    onCustomerMessageInThread(thread, { isNewThread: false });
   }
 
   db.save();
@@ -2375,6 +2828,7 @@ app.post("/api/support", chatLimiter, async (req, res) => {
       }
     ]
   };
+  onCustomerMessageInThread(thread, { isNewThread: true });
   db.data.discussions.unshift(thread);
 
   const notif = db.addNotification({
@@ -2545,6 +2999,32 @@ app.get("/api/admin/dashboard", requireAdmin, async (_req, res) => {
   const ntfyInfo = await generateNtfyQrDataUrl();
   const s = db.data.settings;
 
+  const dossierCtx = {
+    allOrders: db.data.orders || [],
+    allUsers: db.data.users || [],
+    allDiscussions: db.data.discussions || [],
+    rescueClaims: db.data.rescueClaims || [],
+    lossReports: db.data.lossReports || [],
+    visitorProfiles: db.data.visitorProfiles || {}
+  };
+  const dossiers = (db.data.orders || []).map((o) => buildOrderDossier(o, dossierCtx));
+  const allLinkedClaimIds = new Set(dossiers.flatMap((dos) => (dos.linkedClaims || []).map((c) => c.id)));
+  const orphanClaims = [
+    ...(db.data.lossReports || [])
+      .filter((r) => !allLinkedClaimIds.has(r.reportId))
+      .map((r) => ({ kind: "loss_report", id: r.reportId, ...r })),
+    ...(db.data.rescueClaims || [])
+      .filter((c) => !allLinkedClaimIds.has(c.rescueId))
+      .map((c) => ({ kind: "rescue_claim", id: c.rescueId, ...c }))
+  ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  const lostGoodsCount = dossiers.filter(
+    (dos) => dos.dossierStatus === "lost_goods" || dos.dossierStatus === "investigating"
+  ).length;
+  const aiActiveDiscussions = enrichedDiscussions.filter(
+    (t) => !t.diagnostics.isResolved && t.aiControl?.mode === "ai_active"
+  ).length;
+
   res.json({
     admin: {
       name: db.data.admin.name,
@@ -2566,13 +3046,20 @@ app.get("/api/admin/dashboard", requireAdmin, async (_req, res) => {
       activeCustomerSessions: (db.data.userSessions || []).length,
       highRiskCustomers,
       trackedVisitorsCount: trackedVisitors.length,
+      totalDossiers: dossiers.length,
+      lostGoodsCount,
+      orphanClaimsCount: orphanClaims.length,
+      aiActiveDiscussions,
       unreadNotifications: db.data.notifications.filter((n) => !n.read).length
     },
     orders,
+    dossiers,
+    orphanClaims,
     discussions: enrichedDiscussions,
     customers,
     trackedVisitors,
     rescueClaims: db.data.rescueClaims || [],
+    lossReports: db.data.lossReports || [],
     security: {
       blockedEmails: db.data.security?.blockedEmails || [],
       blockedHashesCount: (db.data.security?.blockedHashes || []).length,
@@ -2590,6 +3077,14 @@ app.get("/api/admin/dashboard", requireAdmin, async (_req, res) => {
       storeName: s.storeName,
       supportEmail: s.supportEmail,
       publicUrl: s.publicUrl,
+      ai: {
+        enabled: s.ai?.enabled !== false,
+        provider: s.ai?.provider || "gemini",
+        model: s.ai?.model || "gemini-flash-lite-latest",
+        delaySeconds: Number(s.ai?.delaySeconds) || 60,
+        hasApiKey: Boolean((s.ai?.apiKey || process.env.GEMINI_API_KEY || "").trim()),
+        apiKeyPreview: maskSecret(s.ai?.apiKey || process.env.GEMINI_API_KEY || "")
+      },
       payments: {
         stripe: {
           enabled: s.payments.stripe.enabled,
@@ -2641,6 +3136,90 @@ app.post("/api/admin/discussions/:threadId/read", requireAdmin, (req, res) => {
   thread.unreadByAdmin = 0;
   db.save();
   res.json({ thread: enrichThreadForAdmin(thread) });
+});
+
+// Contrôle Admin du Relais Humain ↔ IA ("Reprendre le relais" / "Perdre le relais")
+app.post("/api/admin/discussions/:threadId/relay", requireAdmin, (req, res) => {
+  const thread = db.data.discussions.find((t) => t.threadId === req.params.threadId);
+  if (!thread) return res.status(404).json({ error: "Discussion introuvable." });
+  const { action } = req.body || {};
+  if (!["take_human", "release_to_ai"].includes(action)) {
+    return res.status(400).json({ error: "Action de relais invalide." });
+  }
+  setThreadRelayMode(thread, action);
+  res.json({ thread: enrichThreadForAdmin(thread) });
+});
+
+// Gestion Admin des Dossiers d'Achat & Rattachement de Pertes de Biens
+app.patch("/api/admin/dossiers/:orderId", requireAdmin, (req, res) => {
+  const order = db.data.orders.find((o) => o.orderId === req.params.orderId);
+  if (!order) return res.status(404).json({ error: "Dossier introuvable." });
+
+  const { dossierStatus, dossierNotes, recoveredContact, phone } = req.body || {};
+  const validStatuses = ["normal", "lost_goods", "investigating", "recovered", "disputed"];
+  if (dossierStatus !== undefined && validStatuses.includes(dossierStatus)) {
+    order.dossierStatus = dossierStatus;
+  }
+  if (dossierNotes !== undefined) {
+    order.dossierNotes = String(dossierNotes || "").trim().slice(0, 1500);
+  }
+  if (recoveredContact !== undefined) {
+    order.recoveredContact = String(recoveredContact || "").trim().slice(0, 160);
+  }
+  if (phone !== undefined) {
+    order.phone = String(phone || "").trim().slice(0, 40);
+  }
+  order.updatedAt = new Date().toISOString();
+
+  appendOrderTraceEvent(order, {
+    type: "dossier_updated",
+    label: `Dossier mis à jour par l'admin (${order.dossierStatus})`,
+    detail: order.recoveredContact ? `Contact retrouvé : ${order.recoveredContact}` : "",
+    actor: "admin",
+    req
+  });
+  db.save();
+  broadcastAdmin("order_updated", { order: enrichOrderForAdmin(order) });
+  res.json({
+    dossier: buildOrderDossier(order, {
+      allOrders: db.data.orders || [],
+      allUsers: db.data.users || [],
+      allDiscussions: db.data.discussions || [],
+      rescueClaims: db.data.rescueClaims || [],
+      lossReports: db.data.lossReports || [],
+      visitorProfiles: db.data.visitorProfiles || {}
+    })
+  });
+});
+
+app.post("/api/admin/dossiers/link-claim", requireAdmin, (req, res) => {
+  const { orderId, claimId } = req.body || {};
+  const order = db.data.orders.find((o) => o.orderId === orderId);
+  if (!order || !claimId) return res.status(404).json({ error: "Dossier ou signalement introuvable." });
+
+  order.linkedClaimIds = Array.isArray(order.linkedClaimIds) ? order.linkedClaimIds : [];
+  if (!order.linkedClaimIds.includes(claimId)) {
+    order.linkedClaimIds.push(String(claimId));
+  }
+  if (!order.dossierStatus || order.dossierStatus === "normal") {
+    order.dossierStatus = "investigating";
+  }
+  appendOrderTraceEvent(order, {
+    type: "claim_linked",
+    label: `Signalement #${claimId} rattaché manuellement au dossier`,
+    actor: "admin",
+    req
+  });
+  db.save();
+  broadcastAdmin("order_updated", { order: enrichOrderForAdmin(order) });
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/test-ai", requireAdmin, async (req, res) => {
+  const { apiKey = "", model = "" } = req.body || {};
+  const cleanOverride = apiKey && !String(apiKey).includes("••••") ? String(apiKey).trim() : "";
+  const result = await testGeminiConnection(cleanOverride, model);
+  res.json(result);
 });
 
 app.patch("/api/admin/discussions/:threadId/flags", requireAdmin, (req, res) => {
@@ -3029,6 +3608,13 @@ app.post("/api/admin/orders/:orderId/deliver", requireAdmin, async (req, res) =>
     email: order.email,
     deliveredAt: accessPayload.deliveredAt
   });
+  appendOrderTraceEvent(order, {
+    type: "access_delivered",
+    label: `Accès livrés au client (${channels.join(" + ") || "coffre"})`,
+    detail: `${credentials.length} bloc(s) d'identifiants chiffrés AES-256`,
+    actor: "admin",
+    req
+  });
 
   if (sendViaDialog) {
     order.messages.push({
@@ -3199,6 +3785,17 @@ app.put("/api/admin/settings", requireAdmin, async (req, res) => {
     }
   }
 
+  if (b.ai) {
+    s.ai = s.ai || { enabled: true, provider: "gemini", apiKey: "", model: "gemini-flash-lite-latest", delaySeconds: 60 };
+    if (b.ai.enabled !== undefined) s.ai.enabled = Boolean(b.ai.enabled);
+    if (b.ai.apiKey && !String(b.ai.apiKey).includes("••••")) s.ai.apiKey = String(b.ai.apiKey).trim();
+    if (b.ai.clearApiKey) s.ai.apiKey = "";
+    if (b.ai.model !== undefined && String(b.ai.model).trim()) s.ai.model = String(b.ai.model).trim();
+    if (b.ai.delaySeconds !== undefined) {
+      s.ai.delaySeconds = Math.max(5, Math.min(600, Number(b.ai.delaySeconds) || 60));
+    }
+  }
+
   if (b.adminAccount) {
     if (b.adminAccount.name) db.data.admin.name = String(b.adminAccount.name).trim();
     if (b.adminAccount.email !== undefined) {
@@ -3270,6 +3867,13 @@ if (remoteEnabled && !isRemoteRestored()) {
     console.error("[NEXUS API] Erreur restauration distante au démarrage:", err.message);
   }
 }
+
+initAiAssistant({
+  broadcastDiscussion,
+  broadcastOrder,
+  broadcastAdmin,
+  enrichThreadForAdmin
+});
 
 app.listen(PORT, () => {
   console.log(`[NEXUS API] Serveur démarré sur http://localhost:${PORT}`);

@@ -1,8 +1,8 @@
 /**
  * Boîte de Dialogue Complète de Discussion Client (#discussion-dialog) :
- * - Accessible à tout moment via le bouton flottant en bas à droite, le menu ou une carte produit
- * - Permet de parler en général de tous les articles OU d'un article précis (avec aperçu prix/stock & achat 1-clic)
- * - Connectée en temps réel (SSE) au nouveau menu "Discussions" de l'Administrateur
+ * - Plein écran ergonomique sur mobile (aucune obstruction par les suggestions ou formulaires)
+ * - Support complet du Relais Humain ↔ IA Gemini (messages thématisés + compteur temps réel)
+ * - Gestion dynamique du clavier virtuel mobile via window.visualViewport
  */
 
 import { store } from "./store.js";
@@ -16,6 +16,10 @@ let activeThread = null;
 let activeToken = "";
 let selectedTopic = "general"; // 'general' | 'rescue' | productId
 let discussionSse = null;
+let metaExpanded = false;
+let suggestionsOpen = false;
+let countdownTimer = null;
+let viewportBound = false;
 
 function loadSavedThreadRef() {
   try {
@@ -40,6 +44,45 @@ function updateFloatingUnreadBadge(count) {
   badge.classList.toggle("hidden", !count || count <= 0);
 }
 
+function formatRelayCountdown(relayDueAt) {
+  if (!relayDueAt) return "";
+  const remSec = Math.max(0, Math.ceil((new Date(relayDueAt).getTime() - Date.now()) / 1000));
+  if (remSec <= 0) return "Relais IA imminent…";
+  return `Relais IA dans ${remSec}s`;
+}
+
+function syncVisualViewportHeight() {
+  const dialog = document.getElementById("discussion-dialog");
+  if (!dialog?.open) return;
+  const vv = window.visualViewport;
+  if (vv && window.innerWidth <= 768) {
+    dialog.style.setProperty("--disc-vvh", `${Math.round(vv.height)}px`);
+    const scroller = document.getElementById("disc-messages-scroll");
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+  } else {
+    dialog.style.removeProperty("--disc-vvh");
+  }
+}
+
+function startCountdownLoop() {
+  if (countdownTimer) return;
+  countdownTimer = setInterval(() => {
+    const dialog = document.getElementById("discussion-dialog");
+    if (!dialog?.open) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+      return;
+    }
+    const ctrl = activeThread?.aiControl;
+    if (ctrl?.mode === "waiting_human" && ctrl.relayDueAt) {
+      const txt = formatRelayCountdown(ctrl.relayDueAt);
+      document.querySelectorAll("[data-relay-countdown]").forEach((el) => {
+        el.textContent = txt;
+      });
+    }
+  }, 1000);
+}
+
 export async function initCustomerDiscussionWidget() {
   const saved = loadSavedThreadRef();
   if (saved?.threadId && saved?.threadToken) {
@@ -56,6 +99,22 @@ export async function initCustomerDiscussionWidget() {
     } catch {
       // ignore offline startup
     }
+  }
+
+  const dialog = document.getElementById("discussion-dialog");
+  if (dialog && !viewportBound) {
+    viewportBound = true;
+    dialog.addEventListener("close", () => {
+      dialog.style.removeProperty("--disc-vvh");
+      if (countdownTimer) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+      }
+    });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", syncVisualViewportHeight);
+    }
+    window.addEventListener("resize", syncVisualViewportHeight);
   }
 
   window.openCustomerDiscussion = openCustomerDiscussion;
@@ -77,13 +136,27 @@ function connectDiscussionStream(threadId, token) {
       const last = activeThread.messages?.[activeThread.messages.length - 1];
       const dialog = document.getElementById("discussion-dialog");
 
-      if (activeThread.messages.length > prevCount && last?.sender === "admin") {
-        playChime("success");
+      const isIncoming =
+        activeThread.messages.length > prevCount &&
+        (last?.sender === "admin" || last?.sender === "ai" || last?.sender === "relay");
+
+      if (isIncoming) {
+        if (last?.sender === "admin" || last?.sender === "ai") {
+          playChime("success");
+        }
         if (dialog?.open) {
           renderDiscussionDialog({ preserveInput: true });
-        } else {
-          updateFloatingUnreadBadge(( parseInt(document.getElementById("floating-chat-unread")?.textContent || "0", 10) || 0 ) + 1);
-          showToast("💬 Nouvelle réponse du conseiller NEXUS ! Cliquez sur Discuter.", "info", 5500);
+        } else if (last?.sender === "admin" || last?.sender === "ai") {
+          updateFloatingUnreadBadge(
+            (parseInt(document.getElementById("floating-chat-unread")?.textContent || "0", 10) || 0) + 1
+          );
+          showToast(
+            last.sender === "ai"
+              ? "🤖 Réponse de l'assistant IA NEXUS ! Cliquez sur Discuter."
+              : "💬 Nouvelle réponse du conseiller NEXUS ! Cliquez sur Discuter.",
+            "info",
+            5500
+          );
         }
       } else if (dialog?.open) {
         renderDiscussionDialog({ preserveInput: true });
@@ -106,6 +179,8 @@ export async function openCustomerDiscussion({ productId = null, topic = null, r
   if (!dialog) return;
 
   updateFloatingUnreadBadge(0);
+  metaExpanded = false;
+  suggestionsOpen = false;
 
   if (resumeThread && resumeToken) {
     activeThread = resumeThread;
@@ -124,7 +199,6 @@ export async function openCustomerDiscussion({ productId = null, topic = null, r
     selectedTopic = "general";
   }
 
-  // Si un fil existe déjà et que le client change d'article, mettre à jour le contexte côté serveur
   if (activeThread && activeToken && (productId || topic)) {
     const isProd = store.getProductById(selectedTopic);
     fetch(`/api/discussions/${encodeURIComponent(activeThread.threadId)}/context`, {
@@ -149,14 +223,16 @@ export async function openCustomerDiscussion({ productId = null, topic = null, r
   renderDiscussionDialog();
   siteTracker.track("discussion_open", selectedTopic);
   if (!dialog.open) dialog.showModal();
+  syncVisualViewportHeight();
+  startCountdownLoop();
 }
 
 function getQuickQuestionsForTopic(topicVal) {
   const prod = store.getProductById(topicVal);
   if (topicVal === "rescue") {
     return [
+      "J'ai perdu l'accès à mon abonnement acheté.",
       "J'ai effectué mon paiement mais ma page s'est fermée.",
-      "J'ai oublié de mettre la référence dans mon virement SEPA.",
       "J'ai fait une erreur dans mon adresse e-mail lors de l'achat."
     ];
   }
@@ -164,16 +240,110 @@ function getQuickQuestionsForTopic(topicVal) {
     return [
       `L'offre ${prod.title} (${prod.price} €) est-elle disponible immédiatement ?`,
       `Comment fonctionne l'activation pour ${prod.title} ?`,
-      `Y a-t-il une garantie 12 mois sur ${prod.title} ?`,
-      `Puis-je régler ${prod.title} par Stripe, PayPal ou SEPA ?`
+      `Y a-t-il une garantie 12 mois sur ${prod.title} ?`
     ];
   }
   return [
-    "Bonjour ! Quelle différence entre vos offres et les abonnements mensuels ?",
-    "Sous combien de temps vais-je recevoir mes accès après paiement ?",
-    "Puis-je acheter plusieurs abonnements dans la même commande ?",
+    "Sous combien de temps vais-je recevoir mes accès ?",
+    "J'ai perdu mon accès ou mon numéro de commande",
     "Comment fonctionne votre Garantie 365 jours ?"
   ];
+}
+
+function getTopicSummaryText(focusedProduct) {
+  if (selectedTopic === "rescue") return "🛡️ Urgence / Bien perdu";
+  if (focusedProduct) return `📦 ${focusedProduct.title} (${focusedProduct.price} €)`;
+  return "🌐 Question générale";
+}
+
+function renderRelayStatusPill(thread) {
+  const ctrl = thread?.aiControl;
+  if (!ctrl) {
+    return `<span class="live-sync-pill"><span class="sync-dot"></span>Support 7j/7</span>`;
+  }
+  if (ctrl.mode === "waiting_human") {
+    return `<span class="live-sync-pill pill-relay-waiting"><span class="sync-dot"></span><span data-relay-countdown>${escapeHtml(formatRelayCountdown(ctrl.relayDueAt))}</span></span>`;
+  }
+  if (ctrl.mode === "ai_active") {
+    return `<span class="live-sync-pill pill-relay-ai">🤖 IA en relais</span>`;
+  }
+  return `<span class="live-sync-pill pill-relay-human">👤 Conseiller actif</span>`;
+}
+
+function renderMessageBubble(m) {
+  const relayCls =
+    m.sender === "relay"
+      ? m.relayEvent === "human_takeover"
+        ? "msg-relay relay-human"
+        : m.relayEvent === "ai_takeover" || m.relayEvent === "ai_resume"
+        ? "msg-relay relay-ai"
+        : "msg-relay relay-waiting"
+      : "";
+
+  const cls =
+    m.sender === "admin"
+      ? "msg-admin"
+      : m.sender === "ai"
+      ? "msg-ai"
+      : m.sender === "relay"
+      ? relayCls
+      : m.sender === "customer"
+      ? "msg-customer"
+      : "msg-system";
+
+  const who =
+    m.sender === "admin"
+      ? "👤 Conseiller NEXUS"
+      : m.sender === "ai"
+      ? "🤖 Assistant IA NEXUS"
+      : m.sender === "relay"
+      ? m.relayEvent === "human_takeover"
+        ? "👤 REPRISE HUMAINE"
+        : m.relayEvent === "ai_takeover" || m.relayEvent === "ai_resume"
+        ? "🤖 RELAIS IA ACTIVÉ"
+        : "📩 ASSISTANCE HUMAINE DEMANDÉE"
+      : m.sender === "customer"
+      ? "Vous"
+      : "Information";
+
+  const time = new Date(m.createdAt).toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+
+  let attachHtml = "";
+  if (m.attachment?.type === "product") {
+    attachHtml = `
+      <div class="chat-attached-card">
+        <div>
+          <strong>📦 ${escapeHtml(m.attachment.title)}</strong>
+          <span>${escapeHtml(m.attachment.duration)} • <strong>${m.attachment.price} €</strong></span>
+        </div>
+        <button type="button" class="btn btn-primary btn-xs" data-disc-buy="${escapeHtml(m.attachment.id)}">Acheter</button>
+      </div>
+    `;
+  } else if (m.attachment?.type === "coupon") {
+    attachHtml = `
+      <div class="chat-attached-card">
+        <div>
+          <strong>🏷️ Code Promo : <code>${escapeHtml(m.attachment.code)}</code></strong>
+          <span>${escapeHtml(m.attachment.label)}</span>
+        </div>
+        <button type="button" class="btn btn-secondary btn-xs" data-copy-chat-coupon="${escapeHtml(m.attachment.code)}">Copier</button>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="chat-bubble ${cls}">
+      <div class="chat-bubble-meta">
+        <strong>${escapeHtml(who)}</strong>
+        <span>${time}</span>
+      </div>
+      ${m.text ? `<div class="chat-bubble-text">${escapeHtml(m.text)}</div>` : ""}
+      ${attachHtml}
+    </div>
+  `;
 }
 
 function renderDiscussionDialog({ preserveInput = false } = {}) {
@@ -188,23 +358,44 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
   const products = store.products || [];
   const focusedProduct = store.getProductById(selectedTopic);
   const quickQuestions = getQuickQuestionsForTopic(selectedTopic);
+  const hasMessages = Boolean(activeThread?.messages?.length);
+
+  const resolvedName =
+    draftName !== undefined
+      ? draftName
+      : activeThread?.customerName && activeThread.customerName !== "Visiteur"
+      ? activeThread.customerName
+      : account.authenticated && account.user
+      ? account.user.name
+      : "";
+  const resolvedEmail =
+    draftEmail !== undefined
+      ? draftEmail
+      : activeThread?.customerEmail || (account.authenticated && account.user ? account.user.email : "");
 
   container.innerHTML = `
-    <div class="checkout-header">
+    <div class="checkout-header disc-modal-header">
       <div class="checkout-header-title">
         <div class="live-pulse-badge" aria-hidden="true">💬</div>
         <div>
           <div class="live-order-title-row">
-            <h1 id="discussion-dialog-title" class="checkout-title">Discussion en Direct avec NEXUS</h1>
-            <span class="live-sync-pill"><span class="sync-dot"></span>Réponse rapide 7j/7</span>
+            <h1 id="discussion-dialog-title" class="checkout-title">Discussion NEXUS</h1>
+            ${renderRelayStatusPill(activeThread)}
           </div>
-          <p class="checkout-subtitle">Posez vos questions sur toute la boutique ou sur un abonnement précis</p>
+          <p class="checkout-subtitle">Posez vos questions • Relais conseiller humain &amp; assistant IA 7j/7</p>
         </div>
       </div>
       <div class="header-dialog-btns">
+        <button
+          type="button"
+          class="btn btn-outline btn-xs disc-meta-header-toggle"
+          id="btn-toggle-disc-meta-hdr"
+          aria-expanded="${metaExpanded}"
+          title="Sujet et coordonnées"
+        >⚙️</button>
         ${
           activeThread
-            ? `<button type="button" class="btn btn-outline btn-xs" id="btn-new-disc-thread" title="Démarrer un nouveau sujet">Nouveau sujet</button>`
+            ? `<button type="button" class="btn btn-outline btn-xs" id="btn-new-disc-thread" title="Démarrer un nouveau sujet">Nouveau</button>`
             : ""
         }
         <button type="button" class="btn-close-dialog" data-close-disc aria-label="Fermer la discussion">
@@ -214,140 +405,94 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
     </div>
 
     <div class="disc-dialog-body">
-      <!-- Barre de sélection du sujet : Tous les articles OU Article précis -->
-      <div class="disc-topic-bar">
-        <label for="disc-topic-select" class="form-label">Sujet de votre discussion :</label>
-        <div class="disc-topic-controls">
-          <select id="disc-topic-select" class="form-control">
-            <option value="general" ${selectedTopic === "general" ? "selected" : ""}>🌐 Tous les articles / Question générale</option>
-            <optgroup label="Parler d'un article précis :">
-              ${products
-                .map(
-                  (p) => `
-                  <option value="${escapeHtml(p.id)}" ${selectedTopic === p.id ? "selected" : ""}>
-                    📦 ${escapeHtml(p.title)} — ${p.price} € (${p.availability === "out_of_stock" ? "Rupture" : "En stock"})
-                  </option>
+      <!-- Barre résumé compacte sur mobile (évite toute obstruction du chat) -->
+      <button type="button" class="disc-mobile-meta-bar" id="btn-toggle-disc-meta" aria-expanded="${metaExpanded}">
+        <span class="disc-mobile-meta-summary">${escapeHtml(getTopicSummaryText(focusedProduct))}${resolvedName ? ` • ${escapeHtml(resolvedName)}` : ""}</span>
+        <span class="disc-mobile-meta-action">${metaExpanded ? "Masquer ▲" : "Sujet / Infos ▾"}</span>
+      </button>
+
+      <!-- Panneau Sujet & Coordonnées (replié par défaut sur mobile, visible sur PC) -->
+      <div class="disc-meta-collapsible ${metaExpanded ? "is-open" : ""}">
+        <div class="disc-topic-bar">
+          <label for="disc-topic-select" class="form-label">Sujet de votre discussion :</label>
+          <div class="disc-topic-controls">
+            <select id="disc-topic-select" class="form-control">
+              <option value="general" ${selectedTopic === "general" ? "selected" : ""}>🌐 Tous les articles / Question générale</option>
+              <optgroup label="Parler d'un article précis :">
+                ${products
+                  .map(
+                    (p) => `
+                    <option value="${escapeHtml(p.id)}" ${selectedTopic === p.id ? "selected" : ""}>
+                      📦 ${escapeHtml(p.title)} — ${p.price} € (${p.availability === "out_of_stock" ? "Rupture" : "En stock"})
+                    </option>
+                  `
+                  )
+                  .join("")}
+              </optgroup>
+              <option value="rescue" ${selectedTopic === "rescue" ? "selected" : ""}>🛡️ Urgence Paiement / Bien perdu</option>
+            </select>
+
+            ${
+              focusedProduct
+                ? `
+                  <div class="disc-focused-product-chip">
+                    <span><strong>${escapeHtml(focusedProduct.title)}</strong> • ${focusedProduct.price} €</span>
+                    ${
+                      store.isProductAvailable(focusedProduct)
+                        ? `<button type="button" class="btn btn-primary btn-xs" data-disc-buy="${escapeHtml(focusedProduct.id)}">Commander</button>`
+                        : `<span class="stock-pill stock-out">Indisponible</span>`
+                    }
+                  </div>
                 `
-                )
-                .join("")}
-            </optgroup>
-            <option value="rescue" ${selectedTopic === "rescue" ? "selected" : ""}>🛡️ Urgence Paiement / Problème commande</option>
-          </select>
+                : ""
+            }
+          </div>
+        </div>
 
-          ${
-            focusedProduct
-              ? `
-                <div class="disc-focused-product-chip">
-                  <span><strong>${escapeHtml(focusedProduct.title)}</strong> • ${focusedProduct.price} €</span>
-                  ${
-                    store.isProductAvailable(focusedProduct)
-                      ? `<button type="button" class="btn btn-primary btn-xs" data-disc-buy="${escapeHtml(focusedProduct.id)}">Commander</button>`
-                      : `<span class="stock-pill stock-out">Indisponible</span>`
-                  }
-                </div>
-              `
-              : ""
-          }
+        <div class="disc-identity-bar">
+          <div class="form-group">
+            <label for="disc-customer-name" class="visually-hidden">Votre prénom</label>
+            <input
+              type="text"
+              id="disc-customer-name"
+              class="form-control form-control-sm"
+              placeholder="Votre prénom (ex: Léa)"
+              value="${escapeHtml(resolvedName)}"
+            />
+          </div>
+          <div class="form-group">
+            <label for="disc-customer-email" class="visually-hidden">Votre e-mail (facultatif)</label>
+            <input
+              type="email"
+              id="disc-customer-email"
+              class="form-control form-control-sm"
+              placeholder="Votre e-mail (facultatif, pour suivi)"
+              value="${escapeHtml(resolvedEmail)}"
+            />
+          </div>
         </div>
       </div>
 
-      <!-- Coordonnées légères (pour recevoir aussi la réponse par mail si besoin) -->
-      <div class="disc-identity-bar">
-        <div class="form-group">
-          <label for="disc-customer-name" class="visually-hidden">Votre prénom</label>
-          <input
-            type="text"
-            id="disc-customer-name"
-            class="form-control form-control-sm"
-            placeholder="Votre prénom (ex: Léa)"
-            value="${escapeHtml(draftName !== undefined ? draftName : activeThread?.customerName && activeThread.customerName !== "Visiteur" ? activeThread.customerName : account.authenticated && account.user ? account.user.name : "")}"
-          />
-        </div>
-        <div class="form-group">
-          <label for="disc-customer-email" class="visually-hidden">Votre e-mail (facultatif)</label>
-          <input
-            type="email"
-            id="disc-customer-email"
-            class="form-control form-control-sm"
-            placeholder="Votre e-mail (facultatif, pour suivi mail)"
-            value="${escapeHtml(draftEmail !== undefined ? draftEmail : activeThread?.customerEmail || (account.authenticated && account.user ? account.user.email : ""))}"
-          />
-        </div>
-      </div>
-
-      <!-- Zone de messages en direct -->
+      <!-- Zone de messages plein écran -->
       <div class="disc-messages-viewport" id="disc-messages-scroll">
         ${
-          !activeThread || !activeThread.messages?.length
+          !hasMessages
             ? `
               <div class="disc-welcome-empty">
                 <p><strong>Bonjour 👋 Comment pouvons-nous vous aider ?</strong></p>
-                <p>Choisissez une question rapide ci-dessous ou écrivez directement votre message : notre équipe reçoit une notification instantanée sur son téléphone.</p>
-                <div class="disc-quick-prompts">
-                  ${quickQuestions
-                    .map(
-                      (q) => `<button type="button" class="quick-prompt-chip" data-quick-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`
-                    )
-                    .join("")}
-                </div>
+                <p>Écrivez votre message ci-dessous : un conseiller humain est alerté immédiatement (et l'assistant IA prend le relais sous 1 min s'il est occupé).</p>
               </div>
             `
-            : activeThread.messages
-                .map((m) => {
-                  const cls =
-                    m.sender === "admin" ? "msg-admin" : m.sender === "customer" ? "msg-customer" : "msg-system";
-                  const who =
-                    m.sender === "admin" ? "Conseiller NEXUS" : m.sender === "customer" ? "Vous" : "Information";
-                  const time = new Date(m.createdAt).toLocaleTimeString("fr-FR", {
-                    hour: "2-digit",
-                    minute: "2-digit"
-                  });
-
-                  let attachHtml = "";
-                  if (m.attachment?.type === "product") {
-                    attachHtml = `
-                      <div class="chat-attached-card">
-                        <div>
-                          <strong>📦 ${escapeHtml(m.attachment.title)}</strong>
-                          <span>${escapeHtml(m.attachment.duration)} • <strong>${m.attachment.price} €</strong></span>
-                        </div>
-                        <button type="button" class="btn btn-primary btn-xs" data-disc-buy="${escapeHtml(m.attachment.id)}">Acheter</button>
-                      </div>
-                    `;
-                  } else if (m.attachment?.type === "coupon") {
-                    attachHtml = `
-                      <div class="chat-attached-card">
-                        <div>
-                          <strong>🏷️ Code Promo : <code>${escapeHtml(m.attachment.code)}</code></strong>
-                          <span>${escapeHtml(m.attachment.label)}</span>
-                        </div>
-                        <button type="button" class="btn btn-secondary btn-xs" data-copy-chat-coupon="${escapeHtml(m.attachment.code)}">Copier</button>
-                      </div>
-                    `;
-                  }
-
-                  return `
-                    <div class="chat-bubble ${cls}">
-                      <div class="chat-bubble-meta">
-                        <strong>${escapeHtml(who)}</strong>
-                        <span>${time}</span>
-                      </div>
-                      ${m.text ? `<div class="chat-bubble-text">${escapeHtml(m.text)}</div>` : ""}
-                      ${attachHtml}
-                    </div>
-                  `;
-                })
-                .join("")
+            : activeThread.messages.map(renderMessageBubble).join("")
         }
       </div>
 
-      <!-- Suggestions rapides même quand la discussion est commencée -->
+      <!-- Tiroir de questions rapides uniquement à la demande (bouton 💡) -->
       ${
-        activeThread?.messages?.length
+        suggestionsOpen
           ? `
-            <div class="disc-inline-suggestions">
+            <div class="disc-suggestions-drawer" id="disc-suggestions-drawer">
               ${quickQuestions
-                .slice(0, 2)
                 .map(
                   (q) => `<button type="button" class="quick-prompt-chip sm" data-quick-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`
                 )
@@ -357,15 +502,23 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
           : ""
       }
 
-      <!-- Saisie du message -->
+      <!-- Barre de saisie collée en bas -->
       <form id="disc-send-form" class="disc-input-bar">
         <input type="text" name="website_hp" class="visually-hidden" tabindex="-1" autocomplete="off" aria-hidden="true" />
+        <button
+          type="button"
+          id="btn-toggle-disc-suggest"
+          class="btn-disc-suggest-toggle ${suggestionsOpen ? "active" : ""}"
+          aria-expanded="${suggestionsOpen}"
+          title="Afficher / masquer les questions rapides"
+          aria-label="Afficher les questions rapides"
+        >💡</button>
         <label for="disc-message-input" class="visually-hidden">Votre message</label>
         <input
           type="text"
           id="disc-message-input"
           class="form-control"
-          placeholder="Posez votre question sur cet article, un paiement ou une commande..."
+          placeholder="Écrivez votre message..."
           value="${escapeHtml(draftMsg)}"
           autocomplete="off"
           required
@@ -382,9 +535,22 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
 
   container.querySelector("[data-close-disc]")?.addEventListener("click", () => closeDialogSmoothly(dialog));
 
+  const toggleMeta = () => {
+    metaExpanded = !metaExpanded;
+    renderDiscussionDialog({ preserveInput: true });
+  };
+  container.querySelector("#btn-toggle-disc-meta")?.addEventListener("click", toggleMeta);
+  container.querySelector("#btn-toggle-disc-meta-hdr")?.addEventListener("click", toggleMeta);
+
+  container.querySelector("#btn-toggle-disc-suggest")?.addEventListener("click", () => {
+    suggestionsOpen = !suggestionsOpen;
+    renderDiscussionDialog({ preserveInput: true });
+  });
+
   container.querySelector("#btn-new-disc-thread")?.addEventListener("click", () => {
     activeThread = null;
     activeToken = "";
+    suggestionsOpen = false;
     localStorage.removeItem(SAVED_THREAD_KEY);
     if (discussionSse) {
       discussionSse.close();
@@ -393,7 +559,6 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
     renderDiscussionDialog();
   });
 
-  // Changement d'article / de sujet
   container.querySelector("#disc-topic-select")?.addEventListener("change", (e) => {
     selectedTopic = e.target.value;
     if (activeThread && activeToken) {
@@ -411,7 +576,6 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
     renderDiscussionDialog({ preserveInput: true });
   });
 
-  // Clic sur "Commander" depuis la discussion
   container.querySelectorAll("[data-disc-buy]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const pid = btn.getAttribute("data-disc-buy");
@@ -437,18 +601,17 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
     });
   });
 
-  // Clic sur une question rapide suggérée
   container.querySelectorAll("[data-quick-q]").forEach((chip) => {
     chip.addEventListener("click", () => {
       const input = container.querySelector("#disc-message-input");
       if (input) {
         input.value = chip.getAttribute("data-quick-q") || "";
+        suggestionsOpen = false;
         container.querySelector("#disc-send-form")?.requestSubmit();
       }
     });
   });
 
-  // Envoi du message
   container.querySelector("#disc-send-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const input = container.querySelector("#disc-message-input");
@@ -462,6 +625,8 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
     const sendBtn = container.querySelector("#btn-disc-send");
     if (sendBtn) sendBtn.disabled = true;
     input.value = "";
+    metaExpanded = false;
+    suggestionsOpen = false;
 
     try {
       if (!activeThread || !activeToken) {
@@ -490,8 +655,8 @@ function renderDiscussionDialog({ preserveInput = false } = {}) {
         connectDiscussionStream(activeThread.threadId, activeToken);
         if (account.authenticated) account.fetchSession({ silent: true });
         renderDiscussionDialog();
+        startCountdownLoop();
       } else {
-        // Mettre à jour nom/email si renseignés entre-temps
         if (customerName || customerEmail) {
           await fetch(`/api/discussions/${encodeURIComponent(activeThread.threadId)}/context`, {
             method: "PATCH",

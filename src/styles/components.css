@@ -5007,3 +5007,455 @@ dialog:modal.admin-modal-container {
   background: rgba(239, 68, 68, 0.2) !important;
   color: #fecaca !important;
 }
+
+/* ==========================================================================
+   v5 Additions : Bulles IA Gemini, Bandeaux Relais Thématisés,
+   Discussion Mobile Ergonomique & Espace Dossiers Admin
+   ========================================================================== */
+.chat-bubble.msg-ai {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.18), rgba(20, 184, 166, 0.14));
+  border: 1px solid rgba(52, 211, 153, 0.48);
+  color: #ecfdf5;
+  align-self: flex-start;
+  max-width: 90%;
+}
+
+.chat-bubble.msg-ai .chat-bubble-meta strong {
+  color: #6ee7b7;
+}
+
+.chat-bubble.msg-relay {
+  align-self: stretch;
+  max-width: 100%;
+  border-radius: var(--radius-md);
+  padding: 0.72rem 0.95rem;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+}
+
+.chat-bubble.msg-relay .chat-bubble-meta {
+  margin-bottom: 0.28rem;
+}
+
+.chat-bubble.msg-relay .chat-bubble-meta strong {
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.chat-bubble.msg-relay.relay-waiting {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(217, 119, 6, 0.14));
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  color: #fef3c7;
+}
+
+.chat-bubble.msg-relay.relay-waiting .chat-bubble-meta strong {
+  color: #fcd34d;
+}
+
+.chat-bubble.msg-relay.relay-ai {
+  background: linear-gradient(135deg, rgba(236, 72, 153, 0.22), rgba(168, 85, 247, 0.2));
+  border: 1px solid rgba(244, 114, 182, 0.62);
+  color: #fdf2f8;
+}
+
+.chat-bubble.msg-relay.relay-ai .chat-bubble-meta strong {
+  color: #f9a8d4;
+}
+
+.chat-bubble.msg-relay.relay-human {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.22), rgba(59, 130, 246, 0.18));
+  border: 1px solid rgba(56, 189, 248, 0.62);
+  color: #f0f9ff;
+}
+
+.chat-bubble.msg-relay.relay-human .chat-bubble-meta strong {
+  color: #7dd3fc;
+}
+
+/* Pilules de statut de relais */
+.pill-relay-waiting {
+  background: rgba(245, 158, 11, 0.18) !important;
+  color: #fcd34d !important;
+  border-color: rgba(251, 191, 36, 0.45) !important;
+}
+
+.pill-relay-ai {
+  background: rgba(236, 72, 153, 0.2) !important;
+  color: #f9a8d4 !important;
+  border-color: rgba(244, 114, 182, 0.5) !important;
+}
+
+.pill-relay-human {
+  background: rgba(14, 165, 233, 0.18) !important;
+  color: #7dd3fc !important;
+  border-color: rgba(56, 189, 248, 0.45) !important;
+}
+
+.pill-filter-ai:not(.active) {
+  color: #f9a8d4;
+  background: rgba(236, 72, 153, 0.12);
+}
+
+/* Barre Admin Relais Humain ↔ IA */
+.admin-relay-control-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.75rem;
+  margin-top: 0.35rem;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--border-medium);
+}
+
+.relay-status-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.relay-status-pill {
+  font-size: 0.73rem;
+  font-weight: 800;
+  padding: 0.22rem 0.6rem;
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+}
+
+.relay-status-pill.is-waiting,
+.relay-pill-mini.is-waiting {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.45);
+}
+
+.relay-status-pill.is-ai,
+.relay-pill-mini.is-ai {
+  background: rgba(236, 72, 153, 0.2);
+  color: #f9a8d4;
+  border-color: rgba(244, 114, 182, 0.5);
+}
+
+.relay-status-pill.is-human,
+.relay-pill-mini.is-human {
+  background: rgba(14, 165, 233, 0.18);
+  color: #7dd3fc;
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.relay-status-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.relay-action-btns {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.btn-relay-human {
+  background: rgba(14, 165, 233, 0.2);
+  border: 1px solid rgba(56, 189, 248, 0.55);
+  color: #e0f2fe;
+  font-weight: 700;
+}
+
+.btn-relay-human:hover:not(:disabled) {
+  background: rgba(14, 165, 233, 0.35);
+}
+
+.btn-relay-ai {
+  background: rgba(236, 72, 153, 0.2);
+  border: 1px solid rgba(244, 114, 182, 0.55);
+  color: #fce7f3;
+  font-weight: 700;
+}
+
+.btn-relay-ai:hover:not(:disabled) {
+  background: rgba(236, 72, 153, 0.35);
+}
+
+.btn-relay-human:disabled,
+.btn-relay-ai:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Discussion Client : barre meta repliable & suggestions à la demande */
+.disc-mobile-meta-bar {
+  display: none;
+}
+
+.disc-meta-header-toggle {
+  display: none;
+}
+
+.disc-meta-collapsible {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.btn-disc-suggest-toggle {
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  border-radius: var(--radius-md);
+  background: rgba(124, 58, 237, 0.14);
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.05rem;
+  flex-shrink: 0;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.btn-disc-suggest-toggle.active,
+.btn-disc-suggest-toggle:hover {
+  background: rgba(124, 58, 237, 0.32);
+  border-color: var(--accent-purple-light);
+}
+
+.disc-suggestions-drawer {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0.45rem 0.65rem;
+  background: rgba(12, 16, 30, 0.95);
+  border-top: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.disc-suggestions-drawer::-webkit-scrollbar {
+  display: none;
+}
+
+.disc-suggestions-drawer .quick-prompt-chip {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Espace Admin "📁 Dossiers" */
+.admin-dossiers-split {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 1.15rem;
+  margin-top: 0.9rem;
+  min-height: calc(100dvh - 280px);
+}
+
+.admin-dossiers-list-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  max-height: calc(100dvh - 280px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.25rem;
+}
+
+.dossier-list-card {
+  width: 100%;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border-light);
+  border-left: 3px solid transparent;
+  border-radius: var(--radius-md);
+  padding: 0.8rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.38rem;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.dossier-list-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.dossier-list-card.selected {
+  background: rgba(124, 58, 237, 0.14);
+  border-color: rgba(167, 139, 250, 0.55);
+  border-left-color: var(--accent-purple-light);
+}
+
+.dossier-list-card.lost-border {
+  border-left-color: var(--color-error);
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.dossier-status-pill {
+  font-size: 0.69rem;
+  font-weight: 800;
+  padding: 0.16rem 0.52rem;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+.dossier-status-pill.st-normal {
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
+}
+
+.dossier-status-pill.st-lost_goods {
+  background: rgba(239, 68, 68, 0.24);
+  color: #fecaca;
+  border: 1px solid rgba(239, 68, 68, 0.55);
+}
+
+.dossier-status-pill.st-investigating {
+  background: rgba(245, 158, 11, 0.22);
+  color: #fde68a;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+}
+
+.dossier-status-pill.st-recovered {
+  background: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+  border: 1px solid rgba(52, 211, 153, 0.45);
+}
+
+.dossier-status-pill.st-disputed {
+  background: rgba(249, 115, 22, 0.22);
+  color: #fed7aa;
+  border: 1px solid rgba(249, 115, 22, 0.5);
+}
+
+.admin-dossiers-detail-pane {
+  background: rgba(6, 9, 18, 0.72);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-lg);
+  padding: 1.05rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  min-inline-size: 0;
+}
+
+.dossier-section-card {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dossier-section-card.lost-card {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.dossier-section-card h3 {
+  font-size: 0.88rem;
+  color: #f8fafc;
+}
+
+.dossier-kv-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem 0.9rem;
+}
+
+.dossier-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 0.14rem;
+  min-width: 0;
+}
+
+.dossier-kv > span:first-child {
+  font-size: 0.7rem;
+  color: var(--text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.dossier-kv > strong,
+.dossier-kv > code {
+  font-size: 0.8rem;
+  word-break: break-word;
+}
+
+.dossier-matches-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.dossier-match-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: rgba(124, 58, 237, 0.12);
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  font-size: 0.79rem;
+  text-align: left;
+  color: #f1f5f9;
+}
+
+.dossier-match-chip:not(.static):hover {
+  background: rgba(124, 58, 237, 0.24);
+}
+
+.dossier-match-chip em {
+  font-style: normal;
+  font-size: 0.72rem;
+  color: var(--accent-cyan-light);
+}
+
+.dossier-timeline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.dossier-timeline-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  font-size: 0.76rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.06);
+}
+
+.dossier-timeline-list .tl-ip {
+  margin-left: auto;
+  font-size: 0.69rem;
+}
+
+.dossier-orphan-candidates {
+  margin-top: 0.6rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border-light);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.dossier-cand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.45rem 0.65rem;
+  border-radius: var(--radius-sm);
+}

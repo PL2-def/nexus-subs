@@ -536,6 +536,37 @@ function installStaticApiInterceptor() {
         saveStaticDb(db);
         return jsonResponse({ order, message: msg });
       }
+      if (sub === "trace-event" && method === "POST") {
+        return jsonResponse({ ok: true });
+      }
+    }
+
+    if (path === "/api/orders/trace-recovery" && method === "POST") {
+      const nowIso = new Date().toISOString();
+      const reportId = `LOSS-${Math.floor(100000 + Math.random() * 900000)}`;
+      const thread = {
+        threadId: `DSC-${reportId.replace("LOSS-", "")}`,
+        threadToken: randomHex(20),
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        topicType: "rescue",
+        topicLabel: `🔎 Perte de bien (${reportId})`,
+        customerName: body.customerName || "Client",
+        customerEmail: String(body.email || "").trim().toLowerCase(),
+        status: "open",
+        riskScore: 0,
+        fraudReasons: [],
+        manualFlags: { fastHelp: true },
+        unreadByAdmin: 1,
+        unreadByCustomer: 0,
+        messages: [
+          { id: `dmsg_loss_u_${Date.now()}`, sender: "customer", text: body.problemDetails || "Perte de bien signalée", createdAt: nowIso },
+          { id: `dmsg_loss_r_${Date.now()}`, sender: "relay", relayEvent: "human_requested", text: "📩 Demande d'assistance humaine envoyée ! (Connectez le serveur backend pour le relais IA Gemini complet).", createdAt: nowIso }
+        ]
+      };
+      db.discussions.unshift(thread);
+      saveStaticDb(db);
+      return jsonResponse({ recovered: false, reportId, matchedCount: 0, thread, threadToken: thread.threadToken }, 201);
     }
 
     // 5. Discussions (Client & Admin)
@@ -565,8 +596,8 @@ function installStaticApiInterceptor() {
           unreadByAdmin: 1,
           unreadByCustomer: 0,
           messages: [
-            { id: `dmsg_sys_${Date.now()}`, sender: "system", text: `Discussion ouverte concernant : ${topicLabel}.`, createdAt: nowIso },
-            { id: `dmsg_${Date.now()}`, sender: "customer", text: String(body.initialMessage || "").trim(), createdAt: nowIso }
+            { id: `dmsg_${Date.now()}`, sender: "customer", text: String(body.initialMessage || "").trim(), createdAt: nowIso },
+            { id: `dmsg_relay_${Date.now()}`, sender: "relay", relayEvent: "human_requested", text: "📩 Demande d'assistance humaine envoyée ! Un conseiller a été alerté.", createdAt: nowIso }
           ]
         };
         db.discussions.unshift(thread);

@@ -169,15 +169,29 @@ function renderCheckoutForm() {
             </div>
           </div>
 
-          <div class="form-group" style="margin-top: 0.85rem;">
-            <label for="checkout-notes" class="form-label">Précision ou compte Gmail pour YouTube (facultatif)</label>
-            <input
-              type="text"
-              id="checkout-notes"
-              name="notes"
-              class="form-control"
-              placeholder="Ex : adresse Gmail à inviter si différente de l'e-mail ci-dessus"
-            />
+          <div class="form-row" style="margin-top: 0.85rem;">
+            <div class="form-group">
+              <label for="checkout-phone" class="form-label">Téléphone / WhatsApp de secours (facultatif)</label>
+              <input
+                type="tel"
+                id="checkout-phone"
+                name="phone"
+                class="form-control"
+                placeholder="Ex : +33 6 12 34 56 78 (utile si vous perdez votre accès)"
+                autocomplete="tel"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="checkout-notes" class="form-label">Précision ou compte Gmail pour YouTube (facultatif)</label>
+              <input
+                type="text"
+                id="checkout-notes"
+                name="notes"
+                class="form-control"
+                placeholder="Ex : adresse Gmail à inviter si différente de l'e-mail ci-dessus"
+              />
+            </div>
           </div>
         </div>
 
@@ -377,6 +391,7 @@ function renderCheckoutForm() {
         couponCode: currentSummary.coupon ? currentSummary.coupon.code : null,
         customerName: container.querySelector("#checkout-name").value.trim(),
         email: container.querySelector("#checkout-email").value.trim(),
+        phone: container.querySelector("#checkout-phone")?.value.trim() || "",
         notes: container.querySelector("#checkout-notes")?.value.trim() || "",
         paymentMethod: selectedGateway,
         honeypot: container.querySelector("#checkout-hp-field")?.value || "",

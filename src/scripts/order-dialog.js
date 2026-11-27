@@ -17,6 +17,17 @@ let currentAccessToken = "";
 let currentPaymentAction = null;
 let secretsRevealed = false;
 let revealTimer = null;
+let tracedVaultOpenOrderId = null;
+
+function sendOrderTraceEvent(orderId, eventType, detail = "") {
+  if (!orderId || !eventType) return;
+  fetch(`/api/orders/${encodeURIComponent(orderId)}/trace-event`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ token: currentAccessToken, eventType, detail })
+  }).catch(() => {});
+}
 
 function cleanupOrderStream() {
   if (activeEventSource) {
@@ -114,21 +125,21 @@ export function renderOrderLookupView() {
       }
 
       <form id="order-lookup-form" class="order-lookup-form">
-        <h2 class="saved-orders-heading">Rechercher avec votre numéro de commande</h2>
+        <h2 class="saved-orders-heading">Rechercher par numéro de commande ou code de récupération</h2>
         <div class="form-row">
           <div class="form-group">
-            <label for="lookup-order-id" class="form-label">Numéro de commande *</label>
-            <input type="text" id="lookup-order-id" class="form-control" placeholder="Ex : NX-849201" required />
+            <label for="lookup-order-id" class="form-label">N° de commande OU Code de récupération *</label>
+            <input type="text" id="lookup-order-id" class="form-control" placeholder="Ex : NX-849201 ou REC-A1B2-C3D4" required />
           </div>
           <div class="form-group">
-            <label for="lookup-order-email" class="form-label">E-mail utilisé lors de l'achat *</label>
-            <input type="email" id="lookup-order-email" class="form-control" placeholder="vous@exemple.fr" required />
+            <label for="lookup-order-email" class="form-label">E-mail utilisé lors de l'achat (facultatif si Code REC-...)</label>
+            <input type="email" id="lookup-order-email" class="form-control" placeholder="vous@exemple.fr" />
           </div>
         </div>
         <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:0.85rem;">
           <button type="submit" class="btn btn-primary">Ouvrir mon coffre d'accès</button>
           <button type="button" class="btn btn-outline" id="btn-lookup-rescue">
-            🛡️ J'ai payé mais j'ai un bug / oublié mon numéro
+            🔎 J'ai perdu mon bien / oublié mon numéro
           </button>
         </div>
       </form>
@@ -162,18 +173,29 @@ export function renderOrderLookupView() {
 
   container.querySelector("#order-lookup-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const orderId = container.querySelector("#lookup-order-id").value.trim();
+    const rawVal = container.querySelector("#lookup-order-id").value.trim();
     const email = container.querySelector("#lookup-order-email").value.trim();
+    const isRec = /^REC-/i.test(rawVal);
+    if (!isRec && !email) {
+      showToast("Indiquez votre e-mail ou utilisez un code REC-XXXX-XXXX.", "info");
+      return;
+    }
     const meta = siteTracker.getPayloadMeta();
     try {
       const resp = await fetch("/api/orders/lookup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ orderId, email, visitorId: meta.visitorId, deviceFingerprint: meta.deviceFingerprint })
+        body: JSON.stringify({
+          orderId: isRec ? "" : rawVal,
+          recoveryCode: isRec ? rawVal : "",
+          email,
+          visitorId: meta.visitorId,
+          deviceFingerprint: meta.deviceFingerprint
+        })
       });
       const data = await resp.json();
-      siteTracker.track("order_lookup_attempt", orderId, { ok: resp.ok });
+      siteTracker.track("order_lookup_attempt", rawVal, { ok: resp.ok });
       if (!resp.ok) throw new Error(data.error || "Commande introuvable.");
 
       store.saveCustomerOrderRef({
@@ -200,6 +222,7 @@ export async function openLiveOrderDialog({ orderId, accessToken, initialOrder =
   if (!dialog) return;
 
   cleanupOrderStream();
+  tracedVaultOpenOrderId = null;
   currentAccessToken = accessToken;
   currentPaymentAction = paymentAction;
 
@@ -267,6 +290,11 @@ function renderLiveOrderContent({ preserveChatInput = false } = {}) {
   const isPaid = ord.paymentStatus === "paid";
   const isDeclared = ord.paymentStatus === "declaration_sent";
   const isDelivered = ord.deliveryStatus === "delivered" && ord.deliveredAccess;
+
+  if (isDelivered && tracedVaultOpenOrderId !== ord.orderId) {
+    tracedVaultOpenOrderId = ord.orderId;
+    sendOrderTraceEvent(ord.orderId, "vault_opened", "Affichage coffre d'accès");
+  }
 
   const step2State = isPaid ? "done" : isDeclared ? "active" : "pending";
   const step3State = isDelivered ? "done" : isPaid || isDeclared ? "active" : "pending";
@@ -354,8 +382,16 @@ function renderLiveOrderContent({ preserveChatInput = false } = {}) {
               .join("")}
           </ul>
           ${
+            ord.recoveryCode
+              ? `<div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;margin-top:0.65rem;padding:0.5rem 0.65rem;border-radius:var(--radius-sm);background:rgba(124,58,237,0.1);border:1px solid rgba(167,139,250,0.3);">
+                  <span style="font-size:0.75rem;">🔑 Code de récupération (si perte d'accès) : <code>${escapeHtml(ord.recoveryCode)}</code></span>
+                  <button type="button" class="btn-copy-sm" data-copy-val="${escapeHtml(ord.recoveryCode)}">Copier</button>
+                </div>`
+              : ""
+          }
+          ${
             ord.proofSignature
-              ? `<p style="font-size:0.72rem;color:var(--text-subtle);margin-top:0.65rem;">Empreinte de vérification de commande : <code>${escapeHtml(ord.proofSignature)}</code></p>`
+              ? `<p style="font-size:0.72rem;color:var(--text-subtle);margin-top:0.5rem;">Dossier : <code>${escapeHtml(ord.dossierId || `DOS-${ord.orderId.replace(/^NX-/, "")}`)}</code> • Signature : <code>${escapeHtml(ord.proofSignature)}</code></p>`
               : ""
           }
         </div>
@@ -372,10 +408,38 @@ function renderLiveOrderContent({ preserveChatInput = false } = {}) {
         <div class="live-chat-messages" id="live-chat-scroll">
           ${(ord.messages || [])
             .map((m) => {
+              const relayCls =
+                m.sender === "relay"
+                  ? m.relayEvent === "human_takeover"
+                    ? "msg-relay relay-human"
+                    : m.relayEvent === "ai_takeover" || m.relayEvent === "ai_resume"
+                    ? "msg-relay relay-ai"
+                    : "msg-relay relay-waiting"
+                  : "";
               const roleClass =
-                m.sender === "admin" ? "msg-admin" : m.sender === "customer" ? "msg-customer" : "msg-system";
+                m.sender === "admin"
+                  ? "msg-admin"
+                  : m.sender === "ai"
+                  ? "msg-ai"
+                  : m.sender === "relay"
+                  ? relayCls
+                  : m.sender === "customer"
+                  ? "msg-customer"
+                  : "msg-system";
               const author =
-                m.sender === "admin" ? "Conseiller NEXUS" : m.sender === "customer" ? "Vous" : "Garantie Système";
+                m.sender === "admin"
+                  ? "Conseiller NEXUS"
+                  : m.sender === "ai"
+                  ? "🤖 Assistant IA NEXUS"
+                  : m.sender === "relay"
+                  ? m.relayEvent === "human_takeover"
+                    ? "👤 Relais Humain"
+                    : m.relayEvent === "ai_takeover" || m.relayEvent === "ai_resume"
+                    ? "🤖 Relais IA Activé"
+                    : "📩 Demande Assistance Humaine"
+                  : m.sender === "customer"
+                  ? "Vous"
+                  : "Garantie Système";
               const time = new Date(m.createdAt).toLocaleTimeString("fr-FR", {
                 hour: "2-digit",
                 minute: "2-digit"
@@ -418,6 +482,7 @@ function renderLiveOrderContent({ preserveChatInput = false } = {}) {
 
   container.querySelector("#btn-download-proof")?.addEventListener("click", () => {
     downloadOrderRescueProof(ord);
+    sendOrderTraceEvent(ord.orderId, "proof_downloaded", "Certificat .txt téléchargé");
   });
 
   container.querySelector("#btn-order-rescue-help")?.addEventListener("click", async () => {
@@ -434,6 +499,9 @@ function renderLiveOrderContent({ preserveChatInput = false } = {}) {
   // Révélation temporisée des mots de passe / PIN (Confidentialité anti-regards indiscrets)
   container.querySelector("#btn-toggle-vault-secrets")?.addEventListener("click", () => {
     secretsRevealed = !secretsRevealed;
+    if (secretsRevealed) {
+      sendOrderTraceEvent(ord.orderId, "secret_revealed", "Révélation 15s des identifiants");
+    }
     clearTimeout(revealTimer);
     if (secretsRevealed) {
       revealTimer = setTimeout(() => {
@@ -450,6 +518,9 @@ function renderLiveOrderContent({ preserveChatInput = false } = {}) {
       try {
         await navigator.clipboard.writeText(val);
         showToast("Copié dans le presse-papiers !", "success", 2200);
+        if (btn.closest(".delivered-vault-card")) {
+          sendOrderTraceEvent(ord.orderId, "credential_copied", "Copie dans le coffre");
+        }
       } catch {
         showToast(val, "info");
       }

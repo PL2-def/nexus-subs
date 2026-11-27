@@ -24,3 +24,6 @@ services:
       # Clé de chiffrement AES-256 des secrets/identifiants livrés (à conserver précieusement)
       - key: VAULT_SECRET_KEY
         sync: false
+      # Clé API Google Gemini pour le relais automatique IA dans les discussions
+      - key: GEMINI_API_KEY
+        sync: false

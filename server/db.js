@@ -305,6 +305,13 @@ function createDefaultStore() {
           pass: process.env.SMTP_PASS || "",
           fromName: "NEXUS SUBSCRIPTIONS"
         }
+      },
+      ai: {
+        enabled: true,
+        provider: "gemini",
+        apiKey: process.env.GEMINI_API_KEY || "",
+        model: process.env.GEMINI_MODEL || "gemini-flash-lite-latest",
+        delaySeconds: 60
       }
     },
     products: DEFAULT_PRODUCTS,
@@ -325,6 +332,7 @@ function createDefaultStore() {
     orders: [],
     discussions: [],
     rescueClaims: [],
+    lossReports: [],
     supportMessages: [],
     newsletter: [],
     notifications: [
@@ -361,6 +369,9 @@ function decryptInMemory(storeObj) {
     storeObj.settings.notifications.ntfyToken = decryptText(storeObj.settings.notifications.ntfyToken);
     storeObj.settings.notifications.barkUrl = decryptText(storeObj.settings.notifications.barkUrl);
   }
+  if (storeObj.settings?.ai) {
+    storeObj.settings.ai.apiKey = decryptText(storeObj.settings.ai.apiKey);
+  }
   if (Array.isArray(storeObj.orders)) {
     for (const o of storeObj.orders) {
       if (o.deliveredAccess) {
@@ -387,6 +398,9 @@ function serializeWithEncryption(storeObj) {
   if (clone.settings?.notifications) {
     clone.settings.notifications.ntfyToken = encryptText(clone.settings.notifications.ntfyToken);
     clone.settings.notifications.barkUrl = encryptText(clone.settings.notifications.barkUrl);
+  }
+  if (clone.settings?.ai) {
+    clone.settings.ai.apiKey = encryptText(clone.settings.ai.apiKey);
   }
   if (Array.isArray(clone.orders)) {
     for (const o of clone.orders) {
@@ -437,6 +451,7 @@ class StoreDB {
               : {},
           discussions: Array.isArray(parsed.discussions) ? parsed.discussions : [],
           rescueClaims: Array.isArray(parsed.rescueClaims) ? parsed.rescueClaims : [],
+          lossReports: Array.isArray(parsed.lossReports) ? parsed.lossReports : [],
           settings: {
             ...defaults.settings,
             ...(parsed.settings || {}),
@@ -452,9 +467,16 @@ class StoreDB {
                 ...defaults.settings.notifications.smtp,
                 ...(parsed.settings?.notifications?.smtp || {})
               }
+            },
+            ai: {
+              ...defaults.settings.ai,
+              ...(parsed.settings?.ai || {})
             }
           }
         };
+        if (process.env.GEMINI_API_KEY && !String(this.data.settings.ai.apiKey || "").trim()) {
+          this.data.settings.ai.apiKey = process.env.GEMINI_API_KEY.trim();
+        }
         this.applyEnvAdminOverrideIfSet();
         this.save();
         return;
